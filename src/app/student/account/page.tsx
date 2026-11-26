@@ -1,0 +1,8 @@
+import type { Metadata } from "next";
+import { AccountPage } from "@/components/pages/account-page";
+
+export const metadata: Metadata = { title: "Profile & security" };
+
+export default function Page({ searchParams }: PageProps<"/student/account">) {
+  return <AccountPage role="student" searchParams={searchParams} />;
+}

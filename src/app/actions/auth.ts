@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { refresh } from "next/cache";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/db";
 import { audit, clientIp } from "@/lib/audit";
@@ -13,107 +13,53 @@ import { clearFailures, lockedUntil, recordFailure } from "@/lib/auth/throttle";
 import { firstIssue, type FormState } from "@/lib/form";
 import { formatTime } from "@/lib/format";
 
-const GENERIC_LOGIN_ERROR = "Incorrect login details.";
+const GENERIC_LOGIN_ERROR = "Incorrect email/ID or password.";
 
-const teacherLogin = z.object({
-  email: z.email("Enter a valid email.").trim().toLowerCase(),
+const loginInput = z.object({
+  identifier: z.string().trim().min(1, "Enter your email or student ID.").max(200),
   password: z.string().min(1, "Enter your password."),
+  next: z.string().optional(),
 });
 
-const studentLogin = z.object({
-  rollNumber: z.string().trim().toUpperCase().min(1, "Enter your roll number."),
-  password: z.string().min(1, "Enter your password."),
-});
+/** Only allow redirects to our own role paths (prevents open-redirect phishing via ?next=). */
+function safeNext(next: string | undefined, role: string) {
+  return next && new RegExp(`^/${role}(/[\\w\\-/]*)?$`).test(next) ? next : null;
+}
 
 /**
- * Shared login flow for both roles:
- * lockout check -> look up user -> constant-time-ish password check -> session.
+ * One login for every role. Accepts an email, or a student ID for students.
+ * Flow: lockout check -> look up user -> constant-time-ish password check -> session.
  */
-async function login(
-  role: "teacher" | "student",
-  identifier: string,
-  password: string,
-  findUser: () => Promise<typeof schema.users.$inferSelect | undefined>,
-): Promise<FormState> {
-  const accountKey = `${role}:${identifier}`;
+export async function login(_: FormState, formData: FormData): Promise<FormState> {
+  const parsed = loginInput.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: firstIssue(parsed.error) };
+  const { password } = parsed.data;
+  const byEmail = parsed.data.identifier.includes("@");
+  const identifier = byEmail ? parsed.data.identifier.toLowerCase() : parsed.data.identifier.toUpperCase();
   const ip = await clientIp();
 
-  const locked = (await lockedUntil("account", accountKey)) ?? (await lockedUntil("ip", ip));
-  if (locked) {
-    return { error: `Too many failed attempts. Try again after ${formatTime(locked)}.` };
-  }
+  const locked = (await lockedUntil("account", identifier)) ?? (await lockedUntil("ip", ip));
+  if (locked) return { error: `Too many failed attempts. Try again after ${formatTime(locked)}.` };
 
-  const user = await findUser();
+  const user = await db.query.users.findFirst({
+    where: (u, { eq }) => (byEmail ? eq(u.email, identifier) : eq(u.studentId, identifier)),
+  });
   const ok = user ? await verifyPassword(password, user.passwordHash) : (await burnTime(password), false);
 
-  if (!user || !ok) {
-    await Promise.all([recordFailure("account", accountKey), recordFailure("ip", ip)]);
-    await audit(user?.id ?? null, "login_failed", `${role} ${identifier}`);
-    if (await lockedUntil("account", accountKey)) await audit(user?.id ?? null, "login_locked", accountKey);
-    // Same message whether the account exists or not, so accounts can't be enumerated.
+  if (!user || !ok || !user.active) {
+    await Promise.all([recordFailure("account", identifier), recordFailure("ip", ip)]);
+    await audit(user?.id ?? null, "login_failed", user && !user.active ? `${identifier} (deactivated)` : identifier);
+    if (await lockedUntil("account", identifier)) await audit(user?.id ?? null, "login_locked", identifier);
+    // Same message for unknown, wrong-password and deactivated, so accounts can't be enumerated.
     return { error: GENERIC_LOGIN_ERROR };
   }
 
-  await clearFailures("account", accountKey);
+  await clearFailures("account", identifier);
   await createSession(user.id);
+  await db.update(schema.users).set({ lastLoginAt: sql`now()` }).where(eq(schema.users.id, user.id));
   await audit(user.id, "login");
-  redirect(user.mustChangePassword ? `/${user.role}/account?required=1` : homeFor(user));
-}
-
-export async function loginTeacher(_: FormState, formData: FormData): Promise<FormState> {
-  const parsed = teacherLogin.safeParse(Object.fromEntries(formData));
-  if (!parsed.success) return { error: firstIssue(parsed.error) };
-  const { email, password } = parsed.data;
-  return login("teacher", email, password, () =>
-    db.query.users.findFirst({ where: (u, { and, eq }) => and(eq(u.email, email), eq(u.role, "teacher")) }),
-  );
-}
-
-export async function loginStudent(_: FormState, formData: FormData): Promise<FormState> {
-  const parsed = studentLogin.safeParse(Object.fromEntries(formData));
-  if (!parsed.success) return { error: firstIssue(parsed.error) };
-  const { rollNumber, password } = parsed.data;
-  return login("student", rollNumber, password, () =>
-    db.query.users.findFirst({ where: (u, { and, eq }) => and(eq(u.rollNumber, rollNumber), eq(u.role, "student")) }),
-  );
-}
-
-const teacherSignup = z.object({
-  name: z.string().trim().min(2, "Enter your name.").max(100),
-  email: z.email("Enter a valid email.").trim().toLowerCase(),
-  password: passwordSchema,
-  inviteCode: z.string().trim(),
-});
-
-/**
- * Teacher registration requires an invite code (TEACHER_INVITE_CODE in .env).
- * In the original app anyone could register as a teacher and email whole classes.
- */
-export async function registerTeacher(_: FormState, formData: FormData): Promise<FormState> {
-  const parsed = teacherSignup.safeParse(Object.fromEntries(formData));
-  if (!parsed.success) return { error: firstIssue(parsed.error) };
-  const { name, email, password, inviteCode } = parsed.data;
-
-  const expected = process.env.TEACHER_INVITE_CODE;
-  if (!expected) return { error: "Teacher registration is disabled on this server." };
-  // Invite-code guessing goes through the same IP throttle as logins.
-  const ip = await clientIp();
-  if (await lockedUntil("ip", ip)) return { error: "Too many attempts. Try again later." };
-  if (inviteCode !== expected) {
-    await recordFailure("ip", ip);
-    return { error: "Invalid invite code." };
-  }
-
-  const inserted = await db
-    .insert(schema.users)
-    .values({ role: "teacher", name, email, passwordHash: await hashPassword(password) })
-    .onConflictDoNothing()
-    .returning({ id: schema.users.id });
-  if (inserted.length === 0) return { error: "An account with this email already exists." };
-
-  await audit(inserted[0].id, "teacher_registered");
-  await createSession(inserted[0].id);
-  redirect("/teacher");
+  if (user.mustChangePassword) redirect(`/${user.role}/account?required=1`);
+  redirect(safeNext(parsed.data.next, user.role) ?? homeFor(user));
 }
 
 const changePasswordInput = z
@@ -145,6 +91,26 @@ export async function changePassword(_: FormState, formData: FormData): Promise<
 
   if (user.mustChangePassword) redirect(homeFor(user));
   return { success: "Password changed. Other devices have been signed out." };
+}
+
+const profileInput = z.object({
+  name: z.string().trim().min(2, "Enter your name.").max(100),
+  department: z.string().trim().max(100).optional(),
+  program: z.string().trim().max(100).optional(),
+  bio: z.string().trim().max(500).optional(),
+});
+
+export async function updateProfile(_: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireUser();
+  const parsed = profileInput.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: firstIssue(parsed.error) };
+  const { name, department, program, bio } = parsed.data;
+  await db
+    .update(schema.users)
+    .set({ name, department: department || null, program: program || null, bio: bio || null })
+    .where(eq(schema.users.id, user.id));
+  refresh();
+  return { success: "Profile updated." };
 }
 
 export async function signOutOtherDevices() {

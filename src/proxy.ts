@@ -7,11 +7,14 @@ import { NextResponse, type NextRequest } from "next/server";
  */
 export function proxy(request: NextRequest) {
   if (!request.cookies.has("eduwave_session")) {
-    return NextResponse.redirect(new URL("/login", request.url));
+    const url = new URL("/login", request.url);
+    // Return here after signing in (validated server-side against the user's role).
+    if (request.nextUrl.pathname !== "/") url.searchParams.set("next", request.nextUrl.pathname);
+    return NextResponse.redirect(url);
   }
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: ["/teacher/:path*", "/student/:path*", "/files/:path*"],
+  matcher: ["/admin/:path*", "/instructor/:path*", "/student/:path*", "/files/:path*"],
 };

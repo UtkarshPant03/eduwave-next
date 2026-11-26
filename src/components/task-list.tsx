@@ -1,5 +1,5 @@
 import { ListTodo } from "lucide-react";
-import { listTasks } from "@/lib/data";
+import { listTasks } from "@/lib/data/shared";
 import { requestTime } from "@/lib/format";
 import { TaskListClient } from "./client/task-list";
 import { Card } from "./ui";

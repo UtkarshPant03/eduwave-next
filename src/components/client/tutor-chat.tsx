@@ -1,7 +1,8 @@
 "use client";
 
 import { Bot, Send, Square, Trash2, User } from "lucide-react";
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Markdown } from "@/components/markdown";
 import { Button } from "@/components/ui";
 
 type Msg = { role: "user" | "assistant"; content: string };
@@ -87,7 +88,7 @@ export function TutorChat() {
             <span className={`grid size-8 shrink-0 place-items-center rounded-full ${m.role === "user" ? "bg-accent text-accent-foreground" : "bg-surface-2 text-accent"}`}>
               {m.role === "user" ? <User className="size-4" /> : <Bot className="size-4" />}
             </span>
-            <div className={`prose-chat max-w-[80%] rounded-2xl px-4 py-2.5 text-sm ${m.role === "user" ? "bg-accent text-accent-foreground" : "bg-surface-2"}`}>
+            <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm ${m.role === "user" ? "bg-accent text-accent-foreground" : "bg-surface-2"}`}>
               {m.content ? <Markdown text={m.content} /> : <TypingDots />}
             </div>
           </div>
@@ -139,43 +140,5 @@ function TypingDots() {
         <span key={i} className="size-1.5 animate-bounce rounded-full bg-muted" style={{ animationDelay: `${i * 0.15}s` }} />
       ))}
     </span>
-  );
-}
-
-/**
- * Tiny Markdown subset (paragraphs, lists, **bold**, `code`, ``` blocks) rendered as
- * React elements. No dangerouslySetInnerHTML: model output can never inject HTML.
- */
-function Markdown({ text }: { text: string }) {
-  const blocks: ReactNode[] = [];
-  const lines = text.split("\n");
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    if (line.startsWith("```")) {
-      const code: string[] = [];
-      i++;
-      while (i < lines.length && !lines[i].startsWith("```")) code.push(lines[i++]);
-      i++;
-      blocks.push(<pre key={blocks.length}><code>{code.join("\n")}</code></pre>);
-    } else if (/^\s*([-*]|\d+\.)\s+/.test(line)) {
-      const ordered = /^\s*\d+\./.test(line);
-      const items: string[] = [];
-      while (i < lines.length && /^\s*([-*]|\d+\.)\s+/.test(lines[i])) items.push(lines[i++].replace(/^\s*([-*]|\d+\.)\s+/, ""));
-      const List = ordered ? "ol" : "ul";
-      blocks.push(<List key={blocks.length}>{items.map((it, k) => <li key={k}>{inline(it)}</li>)}</List>);
-    } else if (line.trim()) {
-      blocks.push(<p key={blocks.length}>{inline(line.replace(/^#+\s*/, ""))}</p>);
-      i++;
-    } else i++;
-  }
-  return <>{blocks}</>;
-}
-
-function inline(s: string): ReactNode {
-  return s.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, k) =>
-    part.startsWith("**") && part.endsWith("**") ? <strong key={k}>{part.slice(2, -2)}</strong>
-    : part.startsWith("`") && part.endsWith("`") ? <code key={k}>{part.slice(1, -1)}</code>
-    : <Fragment key={k}>{part}</Fragment>,
   );
 }

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth/dal";
-import { getFileForUser } from "@/lib/data";
+import { getFileForUser } from "@/lib/data/shared";
 import { isInlineSafe } from "@/lib/uploads";
 
 /** Serves an uploaded file to members of its class only. */

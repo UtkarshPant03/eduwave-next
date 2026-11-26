@@ -6,7 +6,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/db";
 import { requireUser } from "@/lib/auth/dal";
-import { getTeacherClass } from "@/lib/data";
+import { courseForInstructor } from "@/lib/access";
 
 const MAX_SCENE_BYTES = 2_000_000; // embedded images count towards this
 
@@ -52,14 +52,14 @@ export async function renameBoard(boardId: string, title: string) {
     .where(and(eq(schema.boards.id, z.uuid().parse(boardId)), eq(schema.boards.ownerId, user.id)));
 }
 
-/** Teachers can share a board read-only with one of their classes (or stop sharing). */
-export async function shareBoard(boardId: string, classId: string | null) {
+/** Instructors can share a board read-only with one of their courses (or stop sharing). */
+export async function shareBoard(boardId: string, courseId: string | null) {
   const user = await requireUser();
-  if (user.role !== "teacher") return;
-  if (classId) await getTeacherClass(user.id, z.uuid().parse(classId));
+  if (user.role !== "instructor") return;
+  if (courseId) await courseForInstructor(user, z.uuid().parse(courseId));
   await db
     .update(schema.boards)
-    .set({ sharedClassId: classId })
+    .set({ sharedCourseId: courseId })
     .where(and(eq(schema.boards.id, z.uuid().parse(boardId)), eq(schema.boards.ownerId, user.id)));
   refresh();
 }

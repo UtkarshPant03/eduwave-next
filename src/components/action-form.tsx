@@ -19,6 +19,7 @@ export function ActionForm({
   className = "grid gap-3",
   toastOnSuccess = true,
   persistentSuccess = false,
+  fullWidthSubmit = false,
 }: {
   action: (state: FormState, formData: FormData) => Promise<FormState>;
   submitLabel: string;
@@ -27,6 +28,7 @@ export function ActionForm({
   toastOnSuccess?: boolean;
   /** Keep the success text on screen (e.g. a one-time password the user must copy). */
   persistentSuccess?: boolean;
+  fullWidthSubmit?: boolean;
 }) {
   const [state, formAction, pending] = useActionState(action, undefined);
   const formRef = useRef<HTMLFormElement>(null);
@@ -59,7 +61,7 @@ export function ActionForm({
         <FormMessage state={shown} />
       )}
       <div>
-        <Button type="submit" disabled={pending}>
+        <Button type="submit" disabled={pending} className={fullWidthSubmit ? "w-full" : undefined}>
           {pending ? "Working…" : submitLabel}
         </Button>
       </div>

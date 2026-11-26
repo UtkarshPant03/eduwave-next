@@ -7,7 +7,7 @@
  */
 import "server-only";
 import { after } from "next/server";
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import nodemailer, { type Transporter } from "nodemailer";
 import { db, schema } from "@/db";
 
@@ -31,42 +31,42 @@ function getTransport() {
 
 export const emailEnabled = () => getTransport() !== null;
 
-/** Notifies every student in a class. */
-export async function notifyClass(classId: string, msg: Message) {
-  const students = await db
-    .select({ id: schema.users.id, email: schema.users.email })
-    .from(schema.users)
-    .where(and(eq(schema.users.classId, classId), eq(schema.users.role, "student")));
-  if (students.length === 0) return;
-
-  await db.insert(schema.notifications).values(students.map((s) => ({ userId: s.id, ...msg })));
-
+async function sendMail(recipients: string[], msg: Message) {
   const mailer = getTransport();
-  const recipients = students.map((s) => s.email).filter((e): e is string => Boolean(e));
-  if (mailer && recipients.length > 0) {
-    after(async () => {
-      const appUrl = process.env.APP_URL ?? "http://localhost:3000";
-      try {
-        await mailer.sendMail({
-          from: process.env.SMTP_FROM ?? process.env.SMTP_USER,
-          // BCC so students don't see each other's addresses.
-          bcc: recipients,
-          subject: `[eduWave] ${msg.title}`,
-          // Plain text only: no HTML means no injection of teacher-entered text into markup.
-          text: [msg.title, msg.body, msg.link ? `${appUrl}${msg.link}` : ""].filter(Boolean).join("\n\n"),
-        });
-      } catch (err) {
-        console.error("email notification failed", err);
-      }
-    });
-  }
+  if (!mailer || recipients.length === 0) return;
+  after(async () => {
+    const appUrl = process.env.APP_URL ?? "http://localhost:3000";
+    try {
+      await mailer.sendMail({
+        from: process.env.SMTP_FROM ?? process.env.SMTP_USER,
+        // BCC so recipients don't see each other's addresses.
+        bcc: recipients,
+        subject: `[eduWave] ${msg.title}`,
+        // Plain text only: no HTML means no injection of user-entered text into markup.
+        text: [msg.title, msg.body, msg.link ? `${appUrl}${msg.link}` : ""].filter(Boolean).join("\n\n"),
+      });
+    } catch (err) {
+      console.error("email notification failed", err);
+    }
+  });
 }
 
-/** Students who have an email on file (for the "emails enabled" hint). */
-export async function classEmailCount(classId: string) {
-  const rows = await db
-    .select({ id: schema.users.id })
-    .from(schema.users)
-    .where(and(eq(schema.users.classId, classId), isNotNull(schema.users.email)));
-  return rows.length;
+/** Notifies every student enrolled in a course (optionally excluding one user, e.g. the author). */
+export async function notifyCourse(courseId: string, msg: Message, excludeUserId?: string) {
+  const members = await db
+    .select({ id: schema.users.id, email: schema.users.email })
+    .from(schema.enrollments)
+    .innerJoin(schema.users, eq(schema.users.id, schema.enrollments.userId))
+    .where(and(eq(schema.enrollments.courseId, courseId), eq(schema.users.active, true)));
+  const targets = members.filter((m) => m.id !== excludeUserId);
+  if (targets.length === 0) return;
+  await db.insert(schema.notifications).values(targets.map((m) => ({ userId: m.id, ...msg })));
+  await sendMail(targets.map((m) => m.email), msg);
+}
+
+/** Notifies one user (e.g. "your assignment was graded"). */
+export async function notifyUser(userId: string, msg: Message) {
+  await db.insert(schema.notifications).values({ userId, ...msg });
+  const user = await db.query.users.findFirst({ where: (u, { eq }) => eq(u.id, userId), columns: { email: true } });
+  if (user) await sendMail([user.email], msg);
 }

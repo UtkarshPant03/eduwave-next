@@ -1,0 +1,376 @@
+"use server";
+
+import { randomBytes } from "node:crypto";
+import { redirect } from "next/navigation";
+import { refresh } from "next/cache";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { z } from "zod";
+import { db, schema } from "@/db";
+import { courseForInstructor } from "@/lib/access";
+import { aiEnabled, generateQuestions, type GeneratedQuestion } from "@/lib/ai";
+import { requireInstructor } from "@/lib/auth/dal";
+import { rateLimit } from "@/lib/auth/throttle";
+import { COURSE_COLORS } from "@/lib/course-colors";
+import { firstIssue, type FormState } from "@/lib/form";
+import { formatDateTime } from "@/lib/format";
+import { notifyCourse, notifyUser } from "@/lib/notify";
+import { checkUpload } from "@/lib/uploads";
+
+const uuid = z.uuid();
+const isoDate = (msg: string) => z.iso.datetime({ message: msg }).transform((s) => new Date(s));
+const optionalUuid = z
+  .string()
+  .optional()
+  .transform((s) => s || null)
+  .pipe(z.uuid().nullable());
+
+/** Authorise: signed-in instructor who owns this course. Every action starts here. */
+async function ownCourse(courseId: unknown) {
+  const user = await requireInstructor();
+  const course = await courseForInstructor(user, uuid.parse(courseId));
+  return { user, course };
+}
+
+/** A section id from the client must belong to the same course. */
+async function checkSection(courseId: string, sectionId: string | null) {
+  if (!sectionId) return null;
+  const s = await db.query.sections.findFirst({ where: (x, { and, eq }) => and(eq(x.id, sectionId), eq(x.courseId, courseId)) });
+  return s ? s.id : null;
+}
+
+/* ------------------------------ course settings ------------------------------ */
+
+const settingsInput = z.object({
+  title: z.string().trim().min(3).max(120),
+  description: z.string().trim().max(4000).optional(),
+  enrollmentKey: z
+    .string()
+    .trim()
+    .max(40)
+    .optional()
+    .transform((s) => s || null)
+    .refine((s) => s === null || s.length >= 6, "Enrolment keys need at least 6 characters (or leave blank to close self-enrolment)."),
+  color: z.enum(COURSE_COLORS),
+  published: z.literal("on").optional(),
+});
+
+export async function updateCourseSettings(_: FormState, formData: FormData): Promise<FormState> {
+  const { course } = await ownCourse(formData.get("courseId"));
+  const parsed = settingsInput.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: firstIssue(parsed.error) };
+  const { published, ...rest } = parsed.data;
+  await db
+    .update(schema.courses)
+    .set({ ...rest, description: rest.description || null, published: published === "on" })
+    .where(eq(schema.courses.id, course.id));
+  refresh();
+  return { success: "Course settings saved." };
+}
+
+/* --------------------------------- sections --------------------------------- */
+
+export async function addSection(_: FormState, formData: FormData): Promise<FormState> {
+  const { course } = await ownCourse(formData.get("courseId"));
+  const parsed = z
+    .object({ title: z.string().trim().min(1, "Enter a section title.").max(120), summary: z.string().trim().max(1000).optional() })
+    .safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: firstIssue(parsed.error) };
+  const [{ next }] = await db
+    .select({ next: sql<number>`coalesce(max(${schema.sections.position}) + 1, 0)`.mapWith(Number) })
+    .from(schema.sections)
+    .where(eq(schema.sections.courseId, course.id));
+  await db.insert(schema.sections).values({ courseId: course.id, position: next, title: parsed.data.title, summary: parsed.data.summary || null });
+  refresh();
+  return { success: "Section added." };
+}
+
+export async function updateSection(courseId: string, sectionId: string, title: string, summary: string) {
+  const { course } = await ownCourse(courseId);
+  const t = z.string().trim().min(1).max(120).parse(title);
+  await db
+    .update(schema.sections)
+    .set({ title: t, summary: summary.trim().slice(0, 1000) || null })
+    .where(and(eq(schema.sections.id, uuid.parse(sectionId)), eq(schema.sections.courseId, course.id)));
+  refresh();
+}
+
+export async function moveSection(courseId: string, sectionId: string, dir: -1 | 1) {
+  const { course } = await ownCourse(courseId);
+  const all = await db.query.sections.findMany({ where: (s, { eq }) => eq(s.courseId, course.id), orderBy: (s, { asc }) => asc(s.position) });
+  const i = all.findIndex((s) => s.id === sectionId);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= all.length) return;
+  await db.transaction(async (tx) => {
+    await tx.update(schema.sections).set({ position: all[j].position }).where(eq(schema.sections.id, all[i].id));
+    await tx.update(schema.sections).set({ position: all[i].position }).where(eq(schema.sections.id, all[j].id));
+  });
+  refresh();
+}
+
+export async function deleteSection(courseId: string, sectionId: string) {
+  const { course } = await ownCourse(courseId);
+  // Activities in the section move to "General" (FK is ON DELETE SET NULL), nothing is lost.
+  await db.delete(schema.sections).where(and(eq(schema.sections.id, uuid.parse(sectionId)), eq(schema.sections.courseId, course.id)));
+  refresh();
+}
+
+/* ------------------------------- participants ------------------------------- */
+
+export type EnrolResult = { added: string[]; already: string[]; notFound: string[] };
+
+/** Enrols students by email or student ID (one per line / comma separated). */
+export async function enrolStudents(courseId: string, list: string): Promise<EnrolResult> {
+  const { course } = await ownCourse(courseId);
+  const ids = [...new Set(list.split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean))].slice(0, 500);
+  const emails = ids.filter((s) => s.includes("@")).map((s) => s.toLowerCase());
+  const sids = ids.filter((s) => !s.includes("@")).map((s) => s.toUpperCase());
+  const found = await db
+    .select({ id: schema.users.id, email: schema.users.email, studentId: schema.users.studentId })
+    .from(schema.users)
+    .where(
+      and(
+        eq(schema.users.role, "student"),
+        sql`(${emails.length ? inArray(schema.users.email, emails) : sql`false`} or ${sids.length ? inArray(schema.users.studentId, sids) : sql`false`})`,
+      ),
+    );
+  const result: EnrolResult = { added: [], already: [], notFound: [] };
+  for (const raw of ids) {
+    const key = raw.includes("@") ? raw.toLowerCase() : raw.toUpperCase();
+    const u = found.find((f) => f.email === key || f.studentId === key);
+    if (!u) {
+      result.notFound.push(raw);
+      continue;
+    }
+    const ins = await db.insert(schema.enrollments).values({ courseId: course.id, userId: u.id }).onConflictDoNothing().returning();
+    if (ins.length) {
+      result.added.push(raw);
+      await notifyUser(u.id, { title: `You've been enrolled in ${course.code}`, body: course.title, link: `/student/courses/${course.id}` });
+    } else result.already.push(raw);
+  }
+  refresh();
+  return result;
+}
+
+export async function unenrolStudent(courseId: string, userId: string) {
+  const { course } = await ownCourse(courseId);
+  await db.delete(schema.enrollments).where(and(eq(schema.enrollments.courseId, course.id), eq(schema.enrollments.userId, uuid.parse(userId))));
+  refresh();
+}
+
+/* -------------------------------- resources -------------------------------- */
+
+const resourceInput = z.object({
+  title: z.string().trim().min(1, "Enter a title.").max(160),
+  description: z.string().trim().max(1000).optional(),
+  kind: z.enum(["link", "file"]),
+  sectionId: optionalUuid,
+});
+// Only http(s) links: blocks `javascript:` URLs that would run code when clicked.
+const httpUrl = z.url({ protocol: /^https?$/, message: "Enter a full http(s) link." });
+
+export async function addResource(_: FormState, formData: FormData): Promise<FormState> {
+  const { user, course } = await ownCourse(formData.get("courseId"));
+  const parsed = resourceInput.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: firstIssue(parsed.error) };
+  const { title, description, kind } = parsed.data;
+  const sectionId = await checkSection(course.id, parsed.data.sectionId);
+
+  if (kind === "link") {
+    const url = httpUrl.safeParse(formData.get("url"));
+    if (!url.success) return { error: firstIssue(url.error) };
+    await db.insert(schema.resources).values({ courseId: course.id, sectionId, title, description: description || null, url: url.data });
+  } else {
+    const file = formData.get("file");
+    if (!(file instanceof File) || file.size === 0) return { error: "Choose a file to upload." };
+    const checked = await checkUpload(file);
+    if ("error" in checked) return { error: checked.error };
+    await db.transaction(async (tx) => {
+      const [f] = await tx
+        .insert(schema.files)
+        .values({ courseId: course.id, uploaderId: user.id, size: checked.data.length, ...checked })
+        .returning({ id: schema.files.id });
+      await tx.insert(schema.resources).values({ courseId: course.id, sectionId, title, description: description || null, fileId: f.id });
+    });
+  }
+  await notifyCourse(course.id, { title: `${course.code}: new material`, body: title, link: `/student/courses/${course.id}` });
+  refresh();
+  return { success: "Material added to the course." };
+}
+
+/* ------------------------------ generic delete ------------------------------ */
+
+const DELETABLE = {
+  resource: schema.resources,
+  assignment: schema.assignments,
+  quiz: schema.quizzes,
+  live: schema.liveSessions,
+} as const;
+
+/** Deletes an activity (and, for file resources, the stored file). */
+export async function deleteActivity(courseId: string, kind: keyof typeof DELETABLE, id: string) {
+  const { course } = await ownCourse(courseId);
+  const table = DELETABLE[kind];
+  if (!table) return;
+  const [row] = await db
+    .delete(table)
+    .where(and(eq(table.id, uuid.parse(id)), eq(table.courseId, course.id)))
+    .returning();
+  if (kind === "resource" && row && "fileId" in row && row.fileId) await db.delete(schema.files).where(eq(schema.files.id, row.fileId));
+  refresh();
+}
+
+/* ------------------------------- assignments ------------------------------- */
+
+const assignmentInput = z.object({
+  courseId: uuid,
+  sectionId: optionalUuid,
+  title: z.string().trim().min(1, "Enter a title.").max(160),
+  instructions: z.string().trim().min(1, "Write the instructions.").max(20_000),
+  dueAt: isoDate("Choose a due date."),
+  maxPoints: z.coerce.number().int().min(1).max(1000),
+  lateDays: z.coerce.number().int().min(0).max(30),
+});
+
+export async function createAssignment(input: z.input<typeof assignmentInput>): Promise<FormState> {
+  const parsed = assignmentInput.safeParse(input);
+  if (!parsed.success) return { error: firstIssue(parsed.error) };
+  const { course } = await ownCourse(parsed.data.courseId);
+  const a = parsed.data;
+  if (a.dueAt.getTime() <= Date.now()) return { error: "The due date must be in the future." };
+  const [row] = await db
+    .insert(schema.assignments)
+    .values({ ...a, courseId: course.id, sectionId: await checkSection(course.id, a.sectionId) })
+    .returning({ id: schema.assignments.id });
+  await notifyCourse(course.id, { title: `${course.code}: new assignment`, body: `${a.title} · due ${formatDateTime(a.dueAt)}`, link: `/student/assignments/${row.id}` });
+  redirect(`/instructor/assignments/${row.id}`);
+}
+
+const gradeInput = z.object({
+  submissionId: uuid,
+  grade: z.coerce.number().int("Whole points only.").min(0, "Grade can't be negative."),
+  feedback: z.string().trim().max(5000).optional(),
+});
+
+export async function gradeSubmission(_: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireInstructor();
+  const parsed = gradeInput.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: firstIssue(parsed.error) };
+  const [row] = await db
+    .select({ s: schema.submissions, a: schema.assignments })
+    .from(schema.submissions)
+    .innerJoin(schema.assignments, eq(schema.assignments.id, schema.submissions.assignmentId))
+    .where(eq(schema.submissions.id, parsed.data.submissionId));
+  if (!row) return { error: "Submission not found." };
+  const course = await courseForInstructor(user, row.a.courseId);
+  if (parsed.data.grade > row.a.maxPoints) return { error: `Maximum is ${row.a.maxPoints} points.` };
+
+  await db
+    .update(schema.submissions)
+    .set({ grade: parsed.data.grade, feedback: parsed.data.feedback || null, gradedAt: sql`now()` })
+    .where(eq(schema.submissions.id, row.s.id));
+  await notifyUser(row.s.studentId, {
+    title: `${course.code}: "${row.a.title}" graded`,
+    body: `${parsed.data.grade} / ${row.a.maxPoints}`,
+    link: `/student/assignments/${row.a.id}`,
+  });
+  refresh();
+  return { success: "Grade saved and student notified." };
+}
+
+/* --------------------------------- quizzes --------------------------------- */
+
+const questionInput = z
+  .object({
+    prompt: z.string().trim().min(1, "Every question needs text.").max(1000),
+    options: z.array(z.string().trim().min(1, "Options cannot be empty.").max(300)).min(2, "Each question needs at least 2 options.").max(6),
+    correctIndex: z.number().int().min(0),
+    explanation: z.string().trim().max(1000).optional(),
+  })
+  .refine((q) => q.correctIndex < q.options.length, "Pick a correct option for every question.");
+
+const quizInput = z.object({
+  courseId: uuid,
+  sectionId: optionalUuid,
+  title: z.string().trim().min(1, "Enter a title.").max(160),
+  description: z.string().trim().max(2000).optional(),
+  timeLimitMinutes: z.coerce.number().int().min(1, "Time limit must be at least 1 minute.").max(300),
+  // The browser converts datetime-local to ISO (UTC) so the server doesn't guess the zone.
+  deadline: isoDate("Choose a valid deadline."),
+  shuffle: z.boolean().default(true),
+  questions: z.array(questionInput).min(1, "Add at least one question.").max(150),
+});
+
+export type QuizDraft = z.input<typeof quizInput>;
+
+export async function createQuiz(draft: QuizDraft): Promise<FormState> {
+  const parsed = quizInput.safeParse(draft);
+  if (!parsed.success) return { error: firstIssue(parsed.error) };
+  const { course } = await ownCourse(parsed.data.courseId);
+  const quiz = parsed.data;
+  if (quiz.deadline.getTime() <= Date.now()) return { error: "The deadline must be in the future." };
+  const sectionId = await checkSection(course.id, quiz.sectionId);
+
+  const quizId = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .insert(schema.quizzes)
+      .values({
+        courseId: course.id,
+        sectionId,
+        title: quiz.title,
+        description: quiz.description || null,
+        timeLimitMinutes: quiz.timeLimitMinutes,
+        deadline: quiz.deadline,
+        shuffle: quiz.shuffle,
+      })
+      .returning({ id: schema.quizzes.id });
+    await tx.insert(schema.questions).values(quiz.questions.map((q, position) => ({ quizId: row.id, position, ...q })));
+    return row.id;
+  });
+
+  await notifyCourse(course.id, {
+    title: `${course.code}: new quiz`,
+    body: `${quiz.title} · ${quiz.timeLimitMinutes} min · due ${formatDateTime(quiz.deadline)}`,
+    link: `/student/quizzes/${quizId}`,
+  });
+  redirect(`/instructor/quizzes/${quizId}`);
+}
+
+/** Drafts questions with the local AI model. The instructor reviews them before publishing. */
+export async function aiDraftQuestions(input: { courseId: string; material: string; count: number }): Promise<{ questions?: GeneratedQuestion[]; error?: string }> {
+  const { user, course } = await ownCourse(input.courseId);
+  if (!aiEnabled()) return { error: "AI is not configured on this server." };
+  const material = z.string().trim().min(50, "Paste at least a paragraph of material.").max(12_000).safeParse(input.material);
+  if (!material.success) return { error: firstIssue(material.error) };
+  if (!(await rateLimit(`ai-gen:${user.id}`, 15, 60 * 60_000))) return { error: "AI limit reached (15 per hour)." };
+  try {
+    const count = Math.min(Math.max(Math.trunc(input.count) || 5, 1), 15);
+    return { questions: await generateQuestions(material.data, count, `${course.code} ${course.title}`) };
+  } catch (err) {
+    console.error("AI generation failed", err);
+    return { error: "The AI model didn't return usable questions. Try again or shorten the material." };
+  }
+}
+
+/* ------------------------------- live classes ------------------------------- */
+
+const liveInput = z.object({
+  courseId: uuid,
+  sectionId: optionalUuid,
+  title: z.string().trim().min(1, "Enter a topic.").max(160),
+  startsAt: isoDate("Choose a start time."),
+  durationMinutes: z.coerce.number().int().min(10).max(240),
+});
+
+export async function scheduleLive(input: z.input<typeof liveInput>): Promise<FormState> {
+  const parsed = liveInput.safeParse(input);
+  if (!parsed.success) return { error: firstIssue(parsed.error) };
+  const { course } = await ownCourse(parsed.data.courseId);
+  const live = parsed.data;
+  if (live.startsAt.getTime() < Date.now() - 5 * 60_000) return { error: "The start time is in the past." };
+  // Long random room name: Jitsi rooms are public to anyone who knows the name.
+  const room = `eduWave-${randomBytes(12).toString("base64url").replace(/[-_]/g, "x")}`;
+  await db.insert(schema.liveSessions).values({ ...live, courseId: course.id, sectionId: await checkSection(course.id, live.sectionId), room });
+  await notifyCourse(course.id, { title: `${course.code}: live class scheduled`, body: `${live.title} · ${formatDateTime(live.startsAt)}`, link: `/student/courses/${course.id}` });
+  refresh();
+  return { success: "Live class scheduled. Students have been notified." };
+}

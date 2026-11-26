@@ -17,9 +17,13 @@ export type AuditAction =
   | "login_locked"
   | "logout"
   | "password_changed"
-  | "password_reset_by_teacher"
+  | "password_reset"
   | "sessions_revoked"
-  | "teacher_registered";
+  | "user_created"
+  | "user_deactivated"
+  | "user_reactivated"
+  | "course_created"
+  | "role_changed";
 
 /** Never throws: auditing must not break the action being audited. */
 export async function audit(userId: string | null, action: AuditAction, detail?: string) {

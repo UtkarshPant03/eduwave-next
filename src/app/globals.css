@@ -1,65 +1,79 @@
 @import "tailwindcss";
 
-/* Design tokens. Components use these via Tailwind (bg-surface, text-muted, ...).
-   Theme: follows the OS by default; the toggle sets <html data-theme="light|dark">. */
+/* ============================================================================
+   Design tokens. Components use them via Tailwind (bg-surface, text-muted, ...).
+   Theme follows the OS; the toggle sets <html data-theme="light|dark">.
+   ========================================================================== */
 :root {
   color-scheme: light;
-  --background: #f5f6f8;
+  --background: #f6f7fb;
   --surface: #ffffff;
-  --surface-2: #f0f2f5;
-  --foreground: #16181d;
-  --muted: #5d6470;
-  --border: #e2e5ea;
-  --accent: #2f5bd3;
+  --surface-2: #f1f3f9;
+  --foreground: #121528;
+  --muted: #5b6178;
+  --border: #e3e6f0;
+  --accent: #3b4fd8;
+  --accent-2: #7c5cf0;
   --accent-foreground: #ffffff;
-  --danger: #b42318;
+  --danger: #c0262d;
   --success: #067647;
   --warning: #b54708;
+  --ring: rgb(59 79 216 / 0.35);
+  --shadow: 0 1px 2px rgb(16 24 64 / 0.04), 0 4px 16px -4px rgb(16 24 64 / 0.08);
+  --shadow-lg: 0 2px 4px rgb(16 24 64 / 0.05), 0 18px 40px -12px rgb(16 24 64 / 0.22);
   /* chart roles (dataviz reference palette, validated) */
   --series-1: #257de0;
   --series-2: #f47230;
   --status-good: #0aac23;
-  --chart-grid: #e8eaee;
+  --chart-grid: #e8eaf2;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
     color-scheme: dark;
-    --background: #0f1115;
-    --surface: #171a20;
-    --surface-2: #1e222a;
-    --foreground: #e8eaed;
-    --muted: #9aa1ad;
-    --border: #2a2f37;
-    --accent: #7ea2ff;
-    --accent-foreground: #0f1115;
+    --background: #0b0d17;
+    --surface: #131726;
+    --surface-2: #1b2033;
+    --foreground: #e9ebf5;
+    --muted: #9aa0b8;
+    --border: #262c42;
+    --accent: #8393ff;
+    --accent-2: #a98bff;
+    --accent-foreground: #0b0d17;
     --danger: #ff8a80;
     --success: #6ee7a8;
     --warning: #fdb022;
+    --ring: rgb(131 147 255 / 0.4);
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 4px 16px -4px rgb(0 0 0 / 0.4);
+    --shadow-lg: 0 2px 4px rgb(0 0 0 / 0.3), 0 18px 40px -12px rgb(0 0 0 / 0.6);
     --series-1: #338ced;
     --series-2: #e76624;
     --status-good: #0aac23;
-    --chart-grid: #262a31;
+    --chart-grid: #232840;
   }
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --background: #0f1115;
-  --surface: #171a20;
-  --surface-2: #1e222a;
-  --foreground: #e8eaed;
-  --muted: #9aa1ad;
-  --border: #2a2f37;
-  --accent: #7ea2ff;
-  --accent-foreground: #0f1115;
+  --background: #0b0d17;
+  --surface: #131726;
+  --surface-2: #1b2033;
+  --foreground: #e9ebf5;
+  --muted: #9aa0b8;
+  --border: #262c42;
+  --accent: #8393ff;
+  --accent-2: #a98bff;
+  --accent-foreground: #0b0d17;
   --danger: #ff8a80;
   --success: #6ee7a8;
   --warning: #fdb022;
+  --ring: rgb(131 147 255 / 0.4);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 4px 16px -4px rgb(0 0 0 / 0.4);
+  --shadow-lg: 0 2px 4px rgb(0 0 0 / 0.3), 0 18px 40px -12px rgb(0 0 0 / 0.6);
   --series-1: #338ced;
   --series-2: #e76624;
   --status-good: #0aac23;
-  --chart-grid: #262a31;
+  --chart-grid: #232840;
 }
 
 @theme inline {
@@ -70,6 +84,7 @@
   --color-muted: var(--muted);
   --color-border: var(--border);
   --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
   --color-accent-foreground: var(--accent-foreground);
   --color-danger: var(--danger);
   --color-success: var(--success);
@@ -78,31 +93,94 @@
   --color-series-2: var(--series-2);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-  --animate-fade-in: fade-in 0.25s ease-out;
+  --shadow-card: var(--shadow);
+  --shadow-card-lg: var(--shadow-lg);
+  --animate-fade-in: fade-in 0.35s cubic-bezier(0.2, 0.7, 0.2, 1) both;
   --animate-pop: pop 0.18s ease-out;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+  --animate-float: float 7s ease-in-out infinite;
 }
 
 @keyframes fade-in {
-  from { opacity: 0; transform: translateY(4px); }
+  from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: none; }
 }
 @keyframes pop {
   from { transform: scale(0.96); opacity: 0; }
   to { transform: scale(1); opacity: 1; }
 }
+@keyframes shimmer {
+  from { background-position: -400px 0; }
+  to { background-position: 400px 0; }
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
 
 body {
   background: var(--background);
   color: var(--foreground);
+  font-feature-settings: "cv11", "ss01";
 }
+
+::selection { background: var(--ring); }
+
+/* ---------------------------- reusable effects ---------------------------- */
+
+/* Brand gradient text (headings, numbers). */
+.text-gradient {
+  background: linear-gradient(120deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Brand gradient fill. */
+.bg-brand { background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+
+/* Soft mesh glow behind hero sections. */
+.bg-mesh {
+  background:
+    radial-gradient(60rem 30rem at 10% -10%, color-mix(in oklab, var(--accent) 18%, transparent), transparent 60%),
+    radial-gradient(50rem 30rem at 100% 0%, color-mix(in oklab, var(--accent-2) 16%, transparent), transparent 60%);
+}
+
+/* Dotted grid texture. */
+.bg-dots {
+  background-image: radial-gradient(color-mix(in oklab, var(--muted) 30%, transparent) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+/* Card that lifts and gains an accent edge on hover. */
+.card-hover { transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease; }
+.card-hover:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); border-color: color-mix(in oklab, var(--accent) 45%, var(--border)); }
+
+/* Shimmering skeleton blocks. */
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-2) 0, color-mix(in oklab, var(--surface-2) 40%, var(--surface)) 50%, var(--surface-2) 100%);
+  background-size: 800px 100%;
+  animation: var(--animate-shimmer);
+}
+
+/* Staggered entrance for lists/grids: add .stagger to the parent. */
+.stagger > * { animation: var(--animate-fade-in); }
+.stagger > *:nth-child(2) { animation-delay: 40ms; }
+.stagger > *:nth-child(3) { animation-delay: 80ms; }
+.stagger > *:nth-child(4) { animation-delay: 120ms; }
+.stagger > *:nth-child(5) { animation-delay: 160ms; }
+.stagger > *:nth-child(6) { animation-delay: 200ms; }
+.stagger > *:nth-child(n + 7) { animation-delay: 240ms; }
 
 /* Respect users who turn off animations at the OS level. */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-delay: 0ms !important; transition-duration: 0.01ms !important; }
 }
 
-/* Simple Markdown rendering for AI tutor replies. */
-.prose-chat p { margin: 0.4em 0; }
-.prose-chat ul, .prose-chat ol { margin: 0.4em 0; padding-left: 1.25em; list-style: revert; }
-.prose-chat code { background: var(--surface-2); padding: 0.1em 0.3em; border-radius: 4px; font-size: 0.9em; }
-.prose-chat pre { background: var(--surface-2); padding: 0.75em; border-radius: 6px; overflow-x: auto; }
+/* Rendered Markdown (AI tutor, discussions, instructions). */
+.prose-chat p { margin: 0.45em 0; }
+.prose-chat ul, .prose-chat ol { margin: 0.45em 0; padding-left: 1.25em; list-style: revert; }
+.prose-chat code { background: var(--surface-2); padding: 0.1em 0.35em; border-radius: 5px; font-size: 0.9em; }
+.prose-chat pre { background: var(--surface-2); padding: 0.85em; border-radius: 8px; overflow-x: auto; font-size: 0.85em; }
+.prose-chat h3 { font-weight: 600; margin: 0.8em 0 0.3em; }
+.prose-chat a { color: var(--accent); text-decoration: underline; }
