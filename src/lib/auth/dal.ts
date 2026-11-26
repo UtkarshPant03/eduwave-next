@@ -41,7 +41,7 @@ export async function requireUser(): Promise<CurrentUser> {
 export async function requireTeacher(): Promise<CurrentUser> {
   const user = await requireUser();
   if (user.role !== "teacher") redirect("/student");
-  if (user.mustChangePassword) redirect("/account?required=1");
+  if (user.mustChangePassword) redirect(`/${user.role}/account?required=1`);
   return user;
 }
 
@@ -49,7 +49,7 @@ export async function requireStudent(): Promise<CurrentUser & { classId: string 
   const user = await requireUser();
   if (user.role !== "student") redirect("/teacher");
   // Students with a teacher-issued password must pick their own before anything else.
-  if (user.mustChangePassword) redirect("/account?required=1");
+  if (user.mustChangePassword) redirect(`/${user.role}/account?required=1`);
   if (!user.classId) redirect("/login?error=no-class");
   return { ...user, classId: user.classId };
 }

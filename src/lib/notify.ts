@@ -8,12 +8,12 @@
 import "server-only";
 import { after } from "next/server";
 import { and, eq, isNotNull } from "drizzle-orm";
-import nodemailer from "nodemailer";
+import nodemailer, { type Transporter } from "nodemailer";
 import { db, schema } from "@/db";
 
 type Message = { title: string; body?: string; link?: string };
 
-let transport: nodemailer.Transporter | null | undefined;
+let transport: Transporter | null | undefined;
 function getTransport() {
   if (transport !== undefined) return transport;
   const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;

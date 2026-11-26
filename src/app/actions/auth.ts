@@ -57,7 +57,7 @@ async function login(
   await clearFailures("account", accountKey);
   await createSession(user.id);
   await audit(user.id, "login");
-  redirect(user.mustChangePassword ? "/account?required=1" : homeFor(user));
+  redirect(user.mustChangePassword ? `/${user.role}/account?required=1` : homeFor(user));
 }
 
 export async function loginTeacher(_: FormState, formData: FormData): Promise<FormState> {

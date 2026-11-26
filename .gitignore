@@ -43,3 +43,6 @@ next-env.d.ts
 
 # local PGlite database
 /.pglite
+
+# copied from node_modules on install
+/public/excalidraw-assets

@@ -17,7 +17,7 @@ export async function createBoard(formData: FormData) {
     .insert(schema.boards)
     .values({ ownerId: user.id, title, scene: { elements: [] } })
     .returning({ id: schema.boards.id });
-  redirect(`/boards/${board.id}`);
+  redirect(`/${user.role}/boards/${board.id}`);
 }
 
 const sceneInput = z.object({
@@ -68,5 +68,5 @@ export async function deleteBoard(formData: FormData) {
   const user = await requireUser();
   const id = z.uuid().parse(formData.get("boardId"));
   await db.delete(schema.boards).where(and(eq(schema.boards.id, id), eq(schema.boards.ownerId, user.id)));
-  redirect("/boards");
+  redirect(`/${user.role}/boards`);
 }

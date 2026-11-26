@@ -1,9 +1,12 @@
 @import "tailwindcss";
 
-/* Design tokens. Components use these via Tailwind (bg-surface, text-muted, ...). */
+/* Design tokens. Components use these via Tailwind (bg-surface, text-muted, ...).
+   Theme: follows the OS by default; the toggle sets <html data-theme="light|dark">. */
 :root {
-  --background: #f6f7f9;
+  color-scheme: light;
+  --background: #f5f6f8;
   --surface: #ffffff;
+  --surface-2: #f0f2f5;
   --foreground: #16181d;
   --muted: #5d6470;
   --border: #e2e5ea;
@@ -11,12 +14,20 @@
   --accent-foreground: #ffffff;
   --danger: #b42318;
   --success: #067647;
+  --warning: #b54708;
+  /* chart roles (dataviz reference palette, validated) */
+  --series-1: #257de0;
+  --series-2: #f47230;
+  --status-good: #0aac23;
+  --chart-grid: #e8eaee;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
     --background: #0f1115;
     --surface: #171a20;
+    --surface-2: #1e222a;
     --foreground: #e8eaed;
     --muted: #9aa1ad;
     --border: #2a2f37;
@@ -24,12 +35,37 @@
     --accent-foreground: #0f1115;
     --danger: #ff8a80;
     --success: #6ee7a8;
+    --warning: #fdb022;
+    --series-1: #338ced;
+    --series-2: #e76624;
+    --status-good: #0aac23;
+    --chart-grid: #262a31;
   }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #0f1115;
+  --surface: #171a20;
+  --surface-2: #1e222a;
+  --foreground: #e8eaed;
+  --muted: #9aa1ad;
+  --border: #2a2f37;
+  --accent: #7ea2ff;
+  --accent-foreground: #0f1115;
+  --danger: #ff8a80;
+  --success: #6ee7a8;
+  --warning: #fdb022;
+  --series-1: #338ced;
+  --series-2: #e76624;
+  --status-good: #0aac23;
+  --chart-grid: #262a31;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
   --color-border: var(--border);
@@ -37,11 +73,36 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-danger: var(--danger);
   --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --animate-fade-in: fade-in 0.25s ease-out;
+  --animate-pop: pop 0.18s ease-out;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes pop {
+  from { transform: scale(0.96); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
 }
+
+/* Respect users who turn off animations at the OS level. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* Simple Markdown rendering for AI tutor replies. */
+.prose-chat p { margin: 0.4em 0; }
+.prose-chat ul, .prose-chat ol { margin: 0.4em 0; padding-left: 1.25em; list-style: revert; }
+.prose-chat code { background: var(--surface-2); padding: 0.1em 0.3em; border-radius: 4px; font-size: 0.9em; }
+.prose-chat pre { background: var(--surface-2); padding: 0.75em; border-radius: 6px; overflow-x: auto; }
