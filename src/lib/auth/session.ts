@@ -1,0 +1,55 @@
+/**
+ * Database-backed sessions.
+ *
+ * Why not a JWT in localStorage like the original app?
+ * - localStorage is readable by any script on the page (XSS => stolen login).
+ * - A JWT cannot be revoked before it expires; a session row can be deleted.
+ *
+ * The browser holds a random token in an httpOnly cookie (invisible to JS).
+ * The database stores only its SHA-256 hash.
+ */
+import "server-only";
+import { createHash, randomBytes } from "node:crypto";
+import { cookies } from "next/headers";
+import { eq } from "drizzle-orm";
+import { db, schema } from "@/db";
+
+export const SESSION_COOKIE = "eduwave_session";
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+const hashToken = (token: string) => createHash("sha256").update(token).digest("hex");
+
+export async function createSession(userId: string) {
+  const token = randomBytes(32).toString("base64url");
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+  await db.insert(schema.sessions).values({ id: hashToken(token), userId, expiresAt });
+
+  (await cookies()).set(SESSION_COOKIE, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    expires: expiresAt,
+  });
+}
+
+/** Returns the signed-in user's id, or null if the cookie is missing, unknown or expired. */
+export async function readSessionUserId(): Promise<string | null> {
+  const token = (await cookies()).get(SESSION_COOKIE)?.value;
+  if (!token) return null;
+
+  const session = await db.query.sessions.findFirst({
+    where: (s, { eq }) => eq(s.id, hashToken(token)),
+  });
+  if (!session || session.expiresAt.getTime() < Date.now()) return null;
+  return session.userId;
+}
+
+export async function deleteSession() {
+  const store = await cookies();
+  const token = store.get(SESSION_COOKIE)?.value;
+  if (token) {
+    await db.delete(schema.sessions).where(eq(schema.sessions.id, hashToken(token)));
+  }
+  store.delete(SESSION_COOKIE);
+}
