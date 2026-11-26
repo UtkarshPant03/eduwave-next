@@ -10,15 +10,19 @@ import { useEffect, useState, type ReactNode } from "react";
 export function Tabs({ tabs }: { tabs: { id: string; label: ReactNode; content: ReactNode }[] }) {
   const [active, setActive] = useState(tabs[0]?.id);
 
+  // Tab ids as a stable string: `tabs` itself is a new array on every server refresh,
+  // and re-reading the hash then would yank the user to another tab after an action.
+  const ids = tabs.map((t) => t.id).join(",");
   useEffect(() => {
+    const valid = ids.split(",");
     const fromHash = () => {
       const id = window.location.hash.slice(1);
-      if (tabs.some((t) => t.id === id)) setActive(id);
+      if (valid.includes(id)) setActive(id);
     };
     fromHash();
     window.addEventListener("hashchange", fromHash);
     return () => window.removeEventListener("hashchange", fromHash);
-  }, [tabs]);
+  }, [ids]);
 
   function select(id: string) {
     setActive(id);

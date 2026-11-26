@@ -7,6 +7,7 @@
 import "server-only";
 import { cache } from "react";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { readSessionUserId } from "./session";
 import { db } from "@/db";
 
@@ -20,6 +21,9 @@ export type CurrentUser = {
 
 // React's cache() de-duplicates the lookup within one request.
 export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
+  // Everything authenticated is per-request. connection() stops (runtime) prerendering
+  // here, so the session expiry check and the pages' clock reads happen at request time.
+  await connection();
   const userId = await readSessionUserId();
   if (!userId) return null;
 

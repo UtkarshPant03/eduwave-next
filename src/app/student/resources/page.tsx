@@ -1,34 +1,34 @@
 import type { Metadata } from "next";
-import { Badge, Card, Empty, PageHeader } from "@/components/ui";
+import { BookOpen } from "lucide-react";
+import { ResourceFilter } from "@/components/client/resource-filter";
+import { ResourceList } from "@/components/resource-list";
+import { Card, Empty, PageHeader } from "@/components/ui";
 import { requireStudent } from "@/lib/auth/dal";
 import { listResources } from "@/lib/data";
-import { formatDateTime } from "@/lib/format";
 
 export const metadata: Metadata = { title: "Resources" };
 
 export default async function StudentResourcesPage() {
   const student = await requireStudent();
   const resources = await listResources(student.classId);
+  const subjects = [...new Set(resources.map((r) => r.subject))].sort();
 
   return (
     <>
-      <PageHeader title="Resources" subtitle="Shared by your teacher." />
+      <PageHeader title="Resources" subtitle="Notes, files and links shared by your teacher." />
       <Card>
         {resources.length === 0 ? (
-          <Empty>Nothing shared yet.</Empty>
+          <Empty icon={<BookOpen />}>Nothing shared yet.</Empty>
         ) : (
-          <ul className="divide-y divide-border">
-            {resources.map((r) => (
-              <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-3 text-sm">
-                <a href={r.url} target="_blank" rel="noopener noreferrer" className="font-medium text-accent underline">
-                  {r.title}
-                </a>
-                <span className="flex items-center gap-2 text-muted">
-                  <Badge>{r.subject}</Badge> {formatDateTime(r.createdAt)}
-                </span>
-              </li>
-            ))}
-          </ul>
+          <ResourceFilter
+            subjects={subjects}
+            items={resources.map((r) => ({
+              key: r.id,
+              subject: r.subject,
+              text: `${r.title} ${r.subject} ${r.fileName ?? ""}`,
+              node: <ResourceList resources={[r]} />,
+            }))}
+          />
         )}
       </Card>
     </>

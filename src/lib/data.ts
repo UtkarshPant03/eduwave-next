@@ -17,6 +17,15 @@ const { users, classes, quizzes, questions, attempts, answers, resources, files,
 // Percentage of one submitted attempt, as SQL, for aggregation.
 const attemptPercent = sql<number>`(${attempts.score}::float / nullif(${attempts.total}, 0)) * 100`;
 
+/**
+ * Outer-row reference for correlated subqueries. ALWAYS use this (with an aliased
+ * inner table) instead of interpolating a column like ${classes.id}: in single-table
+ * selects Drizzle renders columns unqualified, so "id" would silently bind to the
+ * INNER table's id and return wrong counts.
+ */
+const outer = (table: string, column: string) => sql.raw(`"${table}"."${column}"`);
+const pct = sql.raw("(a.score::float / nullif(a.total, 0)) * 100");
+
 /* ----------------------------- shared ----------------------------- */
 
 export function listTasks(userId: string) {
@@ -164,12 +173,9 @@ export function listTeacherClasses(teacherId: string) {
     .select({
       id: classes.id,
       name: classes.name,
-      studentCount: sql<number>`(select count(*) from ${users} where ${users.classId} = ${classes.id})`.mapWith(Number),
-      quizCount: sql<number>`(select count(*) from ${quizzes} where ${quizzes.classId} = ${classes.id})`.mapWith(Number),
-      averagePercent: sql<number | null>`(
-        select avg((a.score::float / nullif(a.total, 0)) * 100) from ${attempts} a
-        join ${quizzes} q on q.id = a.quiz_id where q.class_id = ${classes.id} and a.submitted_at is not null
-      )`.mapWith((v) => (v == null ? null : Number(v))),
+      studentCount: sql<number>`(select count(*) from users u where u.class_id = ${outer("classes", "id")})`.mapWith(Number),
+      quizCount: sql<number>`(select count(*) from quizzes q where q.class_id = ${outer("classes", "id")})`.mapWith(Number),
+      averagePercent: sql<number | null>`(select avg(${pct}) from attempts a join quizzes q on q.id = a.quiz_id where q.class_id = ${outer("classes", "id")} and a.submitted_at is not null)`.mapWith((v) => (v == null ? null : Number(v))),
     })
     .from(classes)
     .where(eq(classes.teacherId, teacherId))
@@ -184,8 +190,8 @@ export function teacherOpenQuizzes(teacherId: string) {
       title: quizzes.title,
       className: classes.name,
       deadline: quizzes.deadline,
-      submissions: sql<number>`(select count(*) from ${attempts} where ${attempts.quizId} = ${quizzes.id} and ${attempts.submittedAt} is not null)`.mapWith(Number),
-      classSize: sql<number>`(select count(*) from ${users} where ${users.classId} = ${classes.id})`.mapWith(Number),
+      submissions: sql<number>`(select count(*) from attempts a where a.quiz_id = ${outer("quizzes", "id")} and a.submitted_at is not null)`.mapWith(Number),
+      classSize: sql<number>`(select count(*) from users u where u.class_id = ${outer("classes", "id")} and u.role = 'student')`.mapWith(Number),
     })
     .from(quizzes)
     .innerJoin(classes, eq(quizzes.classId, classes.id))
@@ -210,8 +216,8 @@ export function listClassStudents(classId: string) {
       rollNumber: users.rollNumber,
       email: users.email,
       mustChangePassword: users.mustChangePassword,
-      quizzesTaken: sql<number>`(select count(*) from ${attempts} where ${attempts.studentId} = ${users.id} and ${attempts.submittedAt} is not null)`.mapWith(Number),
-      averagePercent: sql<number | null>`(select avg((score::float / nullif(total, 0)) * 100) from ${attempts} where ${attempts.studentId} = ${users.id} and ${attempts.submittedAt} is not null)`.mapWith(
+      quizzesTaken: sql<number>`(select count(*) from attempts a where a.student_id = ${outer("users", "id")} and a.submitted_at is not null)`.mapWith(Number),
+      averagePercent: sql<number | null>`(select avg(${pct}) from attempts a where a.student_id = ${outer("users", "id")} and a.submitted_at is not null)`.mapWith(
         (v) => (v == null ? null : Number(v)),
       ),
     })
@@ -228,8 +234,8 @@ export function listClassQuizzes(classId: string) {
       subject: quizzes.subject,
       deadline: quizzes.deadline,
       timeLimitMinutes: quizzes.timeLimitMinutes,
-      submissions: sql<number>`(select count(*) from ${attempts} where ${attempts.quizId} = ${quizzes.id} and ${attempts.submittedAt} is not null)`.mapWith(Number),
-      averagePercent: sql<number | null>`(select avg((score::float / nullif(total, 0)) * 100) from ${attempts} where ${attempts.quizId} = ${quizzes.id} and ${attempts.submittedAt} is not null)`.mapWith(
+      submissions: sql<number>`(select count(*) from attempts a where a.quiz_id = ${outer("quizzes", "id")} and a.submitted_at is not null)`.mapWith(Number),
+      averagePercent: sql<number | null>`(select avg(${pct}) from attempts a where a.quiz_id = ${outer("quizzes", "id")} and a.submitted_at is not null)`.mapWith(
         (v) => (v == null ? null : Number(v)),
       ),
     })
@@ -388,7 +394,7 @@ export async function studentStats(studentId: string) {
       total: attempts.total,
       submittedAt: attempts.submittedAt,
       // Class average for the same quiz, as a fair comparison point.
-      classAverage: sql<number | null>`(select avg((a2.score::float / nullif(a2.total, 0)) * 100) from ${attempts} a2 where a2.quiz_id = ${quizzes.id} and a2.submitted_at is not null)`.mapWith(
+      classAverage: sql<number | null>`(select avg(${pct}) from attempts a where a.quiz_id = ${outer("quizzes", "id")} and a.submitted_at is not null)`.mapWith(
         (v) => (v == null ? null : Number(v)),
       ),
     })

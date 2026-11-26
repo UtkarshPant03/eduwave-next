@@ -15,6 +15,7 @@ import {
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 // Icons are mapped here because components can't be passed from Server to Client Components.
 const ICONS = {
@@ -87,7 +88,9 @@ export function MobileNav({ links, footer }: { links: NavItem[]; footer?: ReactN
       >
         <Menu className="size-5" />
       </button>
-      {open && (
+      {/* Portal to <body>: the sticky header uses backdrop-filter, which would otherwise
+          become the containing block for this fixed overlay and clip it to the header. */}
+      {open && createPortal(
         <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Menu">
           <div className="absolute inset-0 bg-black/40 animate-fade-in" onClick={() => setOpen(false)} />
           <nav className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col gap-4 bg-surface p-4 shadow-xl animate-fade-in">
@@ -102,7 +105,8 @@ export function MobileNav({ links, footer }: { links: NavItem[]; footer?: ReactN
             <NavLinks links={links} pathname={pathname} onNavigate={() => setOpen(false)} />
             <div className="mt-auto">{footer}</div>
           </nav>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );

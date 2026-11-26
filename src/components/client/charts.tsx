@@ -98,8 +98,8 @@ export function ProgressChart({ data }: { data: { quiz: string; you: number; cla
           <YAxis domain={[0, 100]} unit="%" {...axis} />
           <Tooltip content={<TooltipBox unit="%" />} cursor={{ stroke: "var(--border)" }} />
           <Legend verticalAlign="top" height={28} iconType="plainline" wrapperStyle={{ fontSize: 12, color: "var(--muted)" }} />
-          <Line type="monotone" dataKey="you" name="You" stroke="var(--series-1)" strokeWidth={2} dot={{ r: 4, strokeWidth: 2, fill: "var(--surface)" }} activeDot={{ r: 5 }} label={endLabel("You")} />
-          <Line type="monotone" dataKey="classAverage" name="Class average" stroke="var(--series-2)" strokeWidth={2} strokeDasharray="5 4" dot={{ r: 4, strokeWidth: 2, fill: "var(--surface)" }} connectNulls label={endLabel("Class avg")} />
+          <Line type="monotone" dataKey="you" name="You" stroke="var(--series-1)" strokeWidth={2} dot={{ r: 4, strokeWidth: 2, fill: "var(--surface)" }} activeDot={{ r: 5 }} animationDuration={500} label={endLabel("You")} />
+          <Line type="monotone" dataKey="classAverage" name="Class average" stroke="var(--series-2)" strokeWidth={2} strokeDasharray="5 4" dot={{ r: 4, strokeWidth: 2, fill: "var(--surface)" }} connectNulls animationDuration={500} label={endLabel("Class avg")} />
         </LineChart>
       </ResponsiveContainer>
     </div>
