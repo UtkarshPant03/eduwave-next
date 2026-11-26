@@ -1,11 +1,11 @@
 "use server";
 
 import { refresh } from "next/cache";
-import { and, count, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/db";
 import { requireStudent } from "@/lib/auth/dal";
-import { finalizeAttempt, isAttemptOpen } from "@/lib/quiz-engine";
+import { buildLayout, finalizeAttempt, isAttemptOpen } from "@/lib/quiz-engine";
 
 /** Loads a quiz only if it belongs to the student's own class. */
 async function quizForStudent(quizId: string, classId: string) {
@@ -20,16 +20,16 @@ export async function startAttempt(formData: FormData) {
   const quiz = await quizForStudent(quizId, student.classId);
   if (!quiz || quiz.deadline.getTime() <= Date.now()) return;
 
-  const [{ total }] = await db
-    .select({ total: count() })
-    .from(schema.questions)
-    .where(eq(schema.questions.quizId, quizId));
+  const qs = await db.query.questions.findMany({
+    where: (q, { eq }) => eq(q.quizId, quizId),
+    columns: { id: true, options: true },
+  });
 
   // The unique (quiz, student) constraint makes a second attempt impossible,
-  // even if two requests race.
+  // even if two requests race. The layout fixes this student's shuffled order.
   await db
     .insert(schema.attempts)
-    .values({ quizId, studentId: student.id, total })
+    .values({ quizId, studentId: student.id, total: qs.length, layout: buildLayout(qs, quiz.shuffle) })
     .onConflictDoNothing();
   refresh();
 }
@@ -37,7 +37,8 @@ export async function startAttempt(formData: FormData) {
 const answerInput = z.object({
   quizId: z.uuid(),
   questionId: z.uuid(),
-  selectedIndex: z.number().int().min(0).max(5),
+  // Position of the option as SHOWN to this student; mapped back to the original below.
+  displayIndex: z.number().int().min(0).max(5),
 });
 
 export type SaveAnswerResult = { ok: true } | { ok: false; reason: "closed" | "invalid" };
@@ -47,7 +48,7 @@ export async function saveAnswer(input: z.input<typeof answerInput>): Promise<Sa
   const student = await requireStudent();
   const parsed = answerInput.safeParse(input);
   if (!parsed.success) return { ok: false, reason: "invalid" };
-  const { quizId, questionId, selectedIndex } = parsed.data;
+  const { quizId, questionId, displayIndex } = parsed.data;
 
   const quiz = await quizForStudent(quizId, student.classId);
   if (!quiz) return { ok: false, reason: "invalid" };
@@ -62,7 +63,8 @@ export async function saveAnswer(input: z.input<typeof answerInput>): Promise<Sa
   const question = await db.query.questions.findFirst({
     where: (q, { and, eq }) => and(eq(q.id, questionId), eq(q.quizId, quizId)),
   });
-  if (!question || selectedIndex >= question.options.length) return { ok: false, reason: "invalid" };
+  if (!question || displayIndex >= question.options.length) return { ok: false, reason: "invalid" };
+  const selectedIndex = attempt.layout?.optionOrders[questionId]?.[displayIndex] ?? displayIndex;
 
   await db
     .insert(schema.answers)

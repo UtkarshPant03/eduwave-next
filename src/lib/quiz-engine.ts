@@ -8,8 +8,30 @@
  * - Finalising is idempotent: submit, expiry and page loads can all call it safely.
  */
 import "server-only";
+import { randomInt } from "node:crypto";
 import { and, count, eq, isNull, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
+import type { AttemptLayout } from "@/db/schema";
+
+function shuffled<T>(items: T[]): T[] {
+  const a = [...items];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = randomInt(i + 1); // crypto RNG: order can't be predicted from Math.random state
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+/** Fixes the question and option order for one attempt (identity order if shuffle is off). */
+export function buildLayout(qs: { id: string; options: string[] }[], shuffle: boolean): AttemptLayout {
+  const order = (n: number) => Array.from({ length: n }, (_, i) => i);
+  return {
+    questionOrder: shuffle ? shuffled(qs.map((q) => q.id)) : qs.map((q) => q.id),
+    optionOrders: Object.fromEntries(
+      qs.map((q) => [q.id, shuffle ? shuffled(order(q.options.length)) : order(q.options.length)]),
+    ),
+  };
+}
 
 /** Network latency allowance for the last answer and the auto-submit. */
 export const GRACE_MS = 10_000;
