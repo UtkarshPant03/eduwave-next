@@ -1,7 +1,7 @@
 /**
  * Data Access Layer: the single place that answers "who is making this request?".
  *
- * Every page and every Server Action calls requireTeacher()/requireStudent().
+ * Every page, Server Action and route handler calls one of the require* helpers.
  * Hiding a button in the UI is not security; these checks are.
  */
 import "server-only";
@@ -11,11 +11,13 @@ import { connection } from "next/server";
 import { readSessionUserId } from "./session";
 import { db } from "@/db";
 
+export type Role = "admin" | "instructor" | "student";
+
 export type CurrentUser = {
   id: string;
   name: string;
-  role: "teacher" | "student";
-  classId: string | null;
+  email: string;
+  role: Role;
   mustChangePassword: boolean;
 };
 
@@ -30,32 +32,31 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   const user = await db.query.users.findFirst({
     where: (u, { eq }) => eq(u.id, userId),
     // Never select passwordHash into objects that might reach the client.
-    columns: { id: true, name: true, role: true, classId: true, mustChangePassword: true },
+    columns: { id: true, name: true, email: true, role: true, mustChangePassword: true, active: true },
   });
-  return user ?? null;
+  // A deactivated account loses access immediately, even with a valid session.
+  if (!user || !user.active) return null;
+  const { active: _active, ...rest } = user;
+  return rest;
 });
 
-/** Any signed-in user. Used by shared pages such as /account. */
+export const homeFor = (user: Pick<CurrentUser, "role">) => `/${user.role}`;
+
+/** Any signed-in user. Used by shared pages such as account settings. */
 export async function requireUser(): Promise<CurrentUser> {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
   return user;
 }
 
-export async function requireTeacher(): Promise<CurrentUser> {
+async function requireRole(role: Role): Promise<CurrentUser> {
   const user = await requireUser();
-  if (user.role !== "teacher") redirect("/student");
+  if (user.role !== role) redirect(homeFor(user));
+  // Users with an issued password must pick their own before anything else.
   if (user.mustChangePassword) redirect(`/${user.role}/account?required=1`);
   return user;
 }
 
-export async function requireStudent(): Promise<CurrentUser & { classId: string }> {
-  const user = await requireUser();
-  if (user.role !== "student") redirect("/teacher");
-  // Students with a teacher-issued password must pick their own before anything else.
-  if (user.mustChangePassword) redirect(`/${user.role}/account?required=1`);
-  if (!user.classId) redirect("/login?error=no-class");
-  return { ...user, classId: user.classId };
-}
-
-export const homeFor = (user: Pick<CurrentUser, "role">) => (user.role === "teacher" ? "/teacher" : "/student");
+export const requireAdmin = () => requireRole("admin");
+export const requireInstructor = () => requireRole("instructor");
+export const requireStudent = () => requireRole("student");

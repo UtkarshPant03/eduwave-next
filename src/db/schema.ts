@@ -1,9 +1,10 @@
 /**
- * Database schema.
+ * Database schema (LMS).
  *
- * Compared with the original MongoDB models (mostly `Mixed` fields), every
- * relationship here is an explicit foreign key, and quiz attempts are their own
- * table instead of arrays copied into both the student and the quiz documents.
+ * Core idea, as in Moodle: users ENROL in many COURSES; a course is organised into
+ * SECTIONS (weeks/topics) that contain ACTIVITIES (resources, assignments, quizzes,
+ * live sessions). Every relationship is a foreign key; integrity rules (one attempt
+ * per quiz, one submission per assignment) are database constraints, not app code.
  */
 import {
   type AnyPgColumn,
@@ -27,28 +28,31 @@ const bytea = customType<{ data: Buffer; driverData: Buffer | Uint8Array }>({
   fromDriver: (v) => Buffer.from(v),
 });
 
-const createdAt = () => timestamp({ withTimezone: true }).notNull().defaultNow();
+const ts = () => timestamp({ withTimezone: true });
+const createdAt = () => ts().notNull().defaultNow();
 
-export const roleEnum = pgEnum("role", ["teacher", "student"]);
+/* ============================== people ============================== */
 
-export const users = pgTable(
-  "users",
-  {
-    id: uuid().primaryKey().defaultRandom(),
-    role: roleEnum().notNull(),
-    name: text().notNull(),
-    // Teachers sign in with email, students with a roll number issued by their teacher.
-    email: text().unique(),
-    rollNumber: text().unique(),
-    passwordHash: text().notNull(),
-    // Set when a teacher issues/resets a password: the student must choose their own.
-    mustChangePassword: boolean().notNull().default(false),
-    // Students belong to exactly one class (same as the original app).
-    classId: uuid().references((): AnyPgColumn => classes.id, { onDelete: "set null" }),
-    createdAt: createdAt(),
-  },
-  (t) => [index().on(t.classId)],
-);
+export const roleEnum = pgEnum("role", ["admin", "instructor", "student"]);
+
+export const users = pgTable("users", {
+  id: uuid().primaryKey().defaultRandom(),
+  role: roleEnum().notNull(),
+  name: text().notNull(),
+  email: text().notNull().unique(),
+  // University ID for students (e.g. 22CS1043); students may sign in with it.
+  studentId: text().unique(),
+  passwordHash: text().notNull(),
+  // Set when an admin/instructor issues a password: the user must choose their own.
+  mustChangePassword: boolean().notNull().default(false),
+  // Deactivated accounts can't sign in, but their records (grades, posts) are kept.
+  active: boolean().notNull().default(true),
+  department: text(),
+  program: text(), // e.g. "B.Tech CSE, Year 2"
+  bio: text(),
+  lastLoginAt: ts(),
+  createdAt: createdAt(),
+});
 
 export const sessions = pgTable(
   "sessions",
@@ -58,7 +62,7 @@ export const sessions = pgTable(
     userId: uuid()
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    expiresAt: timestamp({ withTimezone: true }).notNull(),
+    expiresAt: ts().notNull(),
     createdAt: createdAt(),
     userAgent: text(),
   },
@@ -69,11 +73,11 @@ export const sessions = pgTable(
 export const loginThrottle = pgTable("login_throttle", {
   key: text().primaryKey(),
   failures: integer().notNull().default(0),
-  windowStart: timestamp({ withTimezone: true }).notNull().defaultNow(),
-  lockedUntil: timestamp({ withTimezone: true }),
+  windowStart: ts().notNull().defaultNow(),
+  lockedUntil: ts(),
 });
 
-/** Security-relevant events, shown to users on their Security page. */
+/** Security-relevant events. Users see their own; admins see everything. */
 export const auditLog = pgTable(
   "audit_log",
   {
@@ -84,37 +88,153 @@ export const auditLog = pgTable(
     ip: text(),
     createdAt: createdAt(),
   },
-  (t) => [index().on(t.userId, t.createdAt)],
+  (t) => [index().on(t.userId, t.createdAt), index().on(t.createdAt)],
 );
 
-export const classes = pgTable(
-  "classes",
+/* ============================== courses ============================== */
+
+export const courses = pgTable(
+  "courses",
   {
     id: uuid().primaryKey().defaultRandom(),
-    name: text().notNull(),
-    teacherId: uuid()
+    code: text().notNull(), // e.g. CS201
+    title: text().notNull(),
+    description: text(),
+    department: text().notNull(),
+    term: text().notNull(), // e.g. "Spring 2027"
+    credits: integer().notNull().default(3),
+    // Cover art key (see components/course-cover.tsx).
+    color: text().notNull().default("indigo"),
+    instructorId: uuid()
       .notNull()
-      .references((): AnyPgColumn => users.id, { onDelete: "cascade" }),
+      .references((): AnyPgColumn => users.id, { onDelete: "restrict" }),
+    // Students can self-enrol with this key. null = enrolment closed (instructor adds students).
+    enrollmentKey: text(),
+    published: boolean().notNull().default(true),
     createdAt: createdAt(),
   },
-  (t) => [unique().on(t.teacherId, t.name)],
+  (t) => [unique().on(t.code, t.term), index().on(t.instructorId)],
+);
+
+export const enrollments = pgTable(
+  "enrollments",
+  {
+    courseId: uuid()
+      .notNull()
+      .references(() => courses.id, { onDelete: "cascade" }),
+    userId: uuid()
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    enrolledAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.courseId, t.userId] }), index().on(t.userId)],
+);
+
+/** Weekly/topic sections of a course page. */
+export const sections = pgTable(
+  "sections",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    courseId: uuid()
+      .notNull()
+      .references(() => courses.id, { onDelete: "cascade" }),
+    position: integer().notNull(),
+    title: text().notNull(),
+    summary: text(),
+  },
+  (t) => [index().on(t.courseId, t.position)],
+);
+
+const sectionRef = () => uuid().references(() => sections.id, { onDelete: "set null" });
+const courseRef = () =>
+  uuid()
+    .notNull()
+    .references(() => courses.id, { onDelete: "cascade" });
+
+/* ============================== content ============================== */
+
+/** Uploaded files live in Postgres: no paid object storage needed for course-sized use. */
+export const files = pgTable("files", {
+  id: uuid().primaryKey().defaultRandom(),
+  courseId: courseRef(),
+  uploaderId: uuid()
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  name: text().notNull(),
+  mimeType: text().notNull(),
+  size: integer().notNull(),
+  data: bytea().notNull(),
+  createdAt: createdAt(),
+});
+
+export const resources = pgTable(
+  "resources",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    courseId: courseRef(),
+    sectionId: sectionRef(),
+    title: text().notNull(),
+    description: text(),
+    // Exactly one of url / fileId is set.
+    url: text(),
+    fileId: uuid().references(() => files.id, { onDelete: "cascade" }),
+    createdAt: createdAt(),
+  },
+  (t) => [index().on(t.courseId)],
+);
+
+export const assignments = pgTable(
+  "assignments",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    courseId: courseRef(),
+    sectionId: sectionRef(),
+    title: text().notNull(),
+    instructions: text().notNull(),
+    dueAt: ts().notNull(),
+    maxPoints: integer().notNull().default(100),
+    // Submissions are accepted this many days after dueAt, marked late.
+    lateDays: integer().notNull().default(0),
+    createdAt: createdAt(),
+  },
+  (t) => [index().on(t.courseId)],
+);
+
+export const submissions = pgTable(
+  "submissions",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    assignmentId: uuid()
+      .notNull()
+      .references(() => assignments.id, { onDelete: "cascade" }),
+    studentId: uuid()
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    text: text(),
+    fileId: uuid().references(() => files.id, { onDelete: "set null" }),
+    submittedAt: ts().notNull().defaultNow(),
+    grade: integer(),
+    feedback: text(),
+    gradedAt: ts(),
+  },
+  // One submission per student per assignment (resubmitting updates it).
+  (t) => [unique().on(t.assignmentId, t.studentId), index().on(t.studentId)],
 );
 
 export const quizzes = pgTable(
   "quizzes",
   {
     id: uuid().primaryKey().defaultRandom(),
-    classId: uuid()
-      .notNull()
-      .references(() => classes.id, { onDelete: "cascade" }),
+    courseId: courseRef(),
+    sectionId: sectionRef(),
     title: text().notNull(),
-    subject: text().notNull(),
+    description: text(),
     timeLimitMinutes: integer().notNull(),
-    deadline: timestamp({ withTimezone: true }).notNull(),
+    deadline: ts().notNull(),
     shuffle: boolean().notNull().default(true),
     createdAt: createdAt(),
   },
-  (t) => [index().on(t.classId)],
+  (t) => [index().on(t.courseId)],
 );
 
 export const questions = pgTable(
@@ -151,8 +271,8 @@ export const attempts = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     // The server's clock is the source of truth for the timer.
-    startedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
-    submittedAt: timestamp({ withTimezone: true }),
+    startedAt: ts().notNull().defaultNow(),
+    submittedAt: ts(),
     score: integer(),
     total: integer().notNull(),
     layout: jsonb().$type<AttemptLayout>(),
@@ -176,54 +296,72 @@ export const answers = pgTable(
   (t) => [primaryKey({ columns: [t.attemptId, t.questionId] })],
 );
 
-/** Uploaded files live in Postgres: no paid object storage needed for class-sized use. */
-export const files = pgTable("files", {
-  id: uuid().primaryKey().defaultRandom(),
-  classId: uuid()
-    .notNull()
-    .references(() => classes.id, { onDelete: "cascade" }),
-  uploaderId: uuid()
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  name: text().notNull(),
-  mimeType: text().notNull(),
-  size: integer().notNull(),
-  data: bytea().notNull(),
-  createdAt: createdAt(),
-});
-
-export const resources = pgTable(
-  "resources",
-  {
-    id: uuid().primaryKey().defaultRandom(),
-    classId: uuid()
-      .notNull()
-      .references(() => classes.id, { onDelete: "cascade" }),
-    title: text().notNull(),
-    subject: text().notNull(),
-    // Exactly one of url / fileId is set.
-    url: text(),
-    fileId: uuid().references(() => files.id, { onDelete: "cascade" }),
-    createdAt: createdAt(),
-  },
-  (t) => [index().on(t.classId)],
-);
-
 export const liveSessions = pgTable(
   "live_sessions",
   {
     id: uuid().primaryKey().defaultRandom(),
-    classId: uuid()
-      .notNull()
-      .references(() => classes.id, { onDelete: "cascade" }),
+    courseId: courseRef(),
+    sectionId: sectionRef(),
     title: text().notNull(),
-    startsAt: timestamp({ withTimezone: true }).notNull(),
+    startsAt: ts().notNull(),
     durationMinutes: integer().notNull(),
     // Random, unguessable Jitsi room name.
     room: text().notNull().unique(),
     createdAt: createdAt(),
   },
-  (t) => [index().on(t.classId, t.startsAt)],
+  (t) => [index().on(t.courseId, t.startsAt)],
+);
+
+/** Manual "mark as done" for resources and live sessions (quizzes/assignments complete on submit). */
+export const completions = pgTable(
+  "completions",
+  {
+    userId: uuid()
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    itemId: uuid().notNull(),
+    courseId: courseRef(),
+    completedAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.itemId] }), index().on(t.userId, t.courseId)],
+);
+
+/* ============================== community ============================== */
+
+/** Discussion threads. Announcements are instructor-only threads that notify everyone. */
+export const threads = pgTable(
+  "threads",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    courseId: courseRef(),
+    authorId: uuid()
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    title: text().notNull(),
+    body: text().notNull(),
+    isAnnouncement: boolean().notNull().default(false),
+    pinned: boolean().notNull().default(false),
+    locked: boolean().notNull().default(false),
+    createdAt: createdAt(),
+    lastActivityAt: ts().notNull().defaultNow(),
+  },
+  (t) => [index().on(t.courseId, t.lastActivityAt)],
+);
+
+export const posts = pgTable(
+  "posts",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    threadId: uuid()
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    authorId: uuid()
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    body: text().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index().on(t.threadId, t.createdAt)],
 );
 
 export const boards = pgTable(
@@ -233,13 +371,13 @@ export const boards = pgTable(
     ownerId: uuid()
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    // Set when a teacher shares the board read-only with a class.
-    sharedClassId: uuid().references(() => classes.id, { onDelete: "set null" }),
+    // Set when an instructor shares the board read-only with a course.
+    sharedCourseId: uuid().references(() => courses.id, { onDelete: "set null" }),
     title: text().notNull(),
     scene: jsonb().$type<{ elements: unknown[]; files?: Record<string, unknown> }>().notNull(),
-    updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+    updatedAt: ts().notNull().defaultNow(),
   },
-  (t) => [index().on(t.ownerId), index().on(t.sharedClassId)],
+  (t) => [index().on(t.ownerId), index().on(t.sharedCourseId)],
 );
 
 export const notifications = pgTable(
@@ -252,7 +390,7 @@ export const notifications = pgTable(
     title: text().notNull(),
     body: text(),
     link: text(),
-    readAt: timestamp({ withTimezone: true }),
+    readAt: ts(),
     createdAt: createdAt(),
   },
   (t) => [index().on(t.userId, t.createdAt)],
@@ -267,7 +405,7 @@ export const tasks = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     text: text().notNull(),
     done: boolean().notNull().default(false),
-    dueDate: timestamp({ withTimezone: true }),
+    dueDate: ts(),
     createdAt: createdAt(),
   },
   (t) => [index().on(t.userId)],
