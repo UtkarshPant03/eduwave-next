@@ -43,6 +43,9 @@ next-env.d.ts
 
 # local PGlite database
 /.pglite
+/.pglite.before-restore-*
+# database backups contain student data: never commit them
+/backups
 
 # copied from node_modules on install
 /public/excalidraw-assets

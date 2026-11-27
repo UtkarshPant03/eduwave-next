@@ -1,11 +1,12 @@
 import { getCurrentUser } from "@/lib/auth/dal";
 import { csvResponse } from "@/lib/csv";
 import { getQuizAnalytics } from "@/lib/data/assessments";
+import { routeIds } from "@/lib/route-ids";
 
 export async function GET(_: Request, ctx: RouteContext<"/instructor/quizzes/[quizId]/export">) {
   const user = await getCurrentUser();
   if (!user || user.role !== "instructor") return new Response("Unauthorized", { status: 401 });
-  const { quizId } = await ctx.params;
+  const { quizId } = routeIds(await ctx.params);
   // getQuizAnalytics checks the quiz belongs to this instructor (404 otherwise).
   const { quiz, results } = await getQuizAnalytics(user, quizId);
   return csvResponse(`${quiz.title}-results`, [

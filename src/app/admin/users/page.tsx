@@ -35,8 +35,10 @@ export default async function AdminUsersPage({ searchParams }: PageProps<"/admin
           <button className={buttonClass("secondary")}>Filter</button>
         </form>
         <Table head={["User", "Role", "Department", "Courses", "Last sign-in", "Status", ""]}>
+          {/* Deactivated rows get a tinted background (plus the status badge), not opacity:
+              fading text below 4.5:1 contrast makes it unreadable for low-vision admins. */}
           {users.map((u) => (
-            <tr key={u.id} className={u.active ? undefined : "opacity-60"}>
+            <tr key={u.id} className={u.active ? undefined : "bg-surface-2/60"}>
               <td className="px-2 py-2">
                 <span className="flex items-center gap-2">
                   <Avatar name={u.name} size="sm" />

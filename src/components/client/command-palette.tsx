@@ -122,11 +122,13 @@ export function PaletteButton() {
     <button
       onClick={() => window.dispatchEvent(new Event("open-palette"))}
       className="flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-1.5 text-sm text-muted transition hover:border-accent/40 hover:text-foreground"
-      aria-label="Search (Ctrl+K)"
+      // The accessible name comes from the visible text ("Search…"), so voice-control users can
+      // say what they see. On phones the text is visually hidden but still read out.
+      aria-keyshortcuts="Control+K"
     >
-      <Search className="size-4" />
-      <span className="hidden sm:inline">Search…</span>
-      <kbd className="hidden rounded-md border border-border px-1.5 text-[10px] sm:inline">Ctrl K</kbd>
+      <Search className="size-4" aria-hidden />
+      <span className="sr-only sm:not-sr-only">Search…</span>
+      <kbd aria-hidden className="hidden rounded-md border border-border px-1.5 text-[10px] sm:inline">Ctrl K</kbd>
     </button>
   );
 }

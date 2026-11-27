@@ -9,19 +9,12 @@ import { Dialog } from "./dialog";
 
 const iconBtn = "grid size-7 place-items-center rounded-lg text-muted hover:bg-surface-2 hover:text-foreground [&>svg]:size-3.5";
 
-/** Edit / reorder / delete controls on a section header (clicks don't toggle the <details>). */
+/** Edit / reorder / delete controls shown beside a section header (outside its <summary>). */
 export function SectionControls({ courseId, sectionId, title, summary }: { courseId: string; sectionId: string; title: string; summary: string }) {
   const [editing, setEditing] = useState(false);
   const [pending, start] = useTransition();
-  // Keep clicks on these buttons from toggling the surrounding <details>, but leave
-  // clicks inside the (portalled) edit dialog alone so its form can submit.
-  const stop = (e: React.MouseEvent) => {
-    if ((e.target as Element).closest("dialog")) return;
-    e.preventDefault();
-    e.stopPropagation();
-  };
   return (
-    <span className="flex items-center gap-0.5" onClick={stop}>
+    <span className="flex items-center gap-0.5">
       <button className={iconBtn} aria-label="Move section up" disabled={pending} onClick={() => start(() => moveSection(courseId, sectionId, -1))}><ArrowUp /></button>
       <button className={iconBtn} aria-label="Move section down" disabled={pending} onClick={() => start(() => moveSection(courseId, sectionId, 1))}><ArrowDown /></button>
       <button className={iconBtn} aria-label="Edit section" onClick={() => setEditing(true)}><Pencil /></button>
@@ -65,11 +58,12 @@ export function DeleteActivityButton({ courseId, kind, id, title }: { courseId: 
       aria-label={`Delete ${title}`}
       disabled={pending}
       onClick={() => {
-        const extra = kind === "assignment" || kind === "quiz" ? " All submissions and grades for it will be deleted." : "";
-        if (confirm(`Delete "${title}"?${extra}`))
+        if (confirm(`Delete "${title}"? This can't be undone.`))
           start(async () => {
-            await deleteActivity(courseId, kind, id);
-            toast.success("Deleted.");
+            // The server refuses if students have already submitted or attempted it.
+            const res = await deleteActivity(courseId, kind, id);
+            if (res.error) toast.error(res.error, { duration: 8000 });
+            else toast.success("Deleted.");
           });
       }}
     >

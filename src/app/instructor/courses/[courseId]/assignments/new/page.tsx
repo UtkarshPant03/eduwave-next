@@ -3,9 +3,10 @@ import { PageHeader } from "@/components/ui";
 import { courseForInstructor } from "@/lib/access";
 import { requireInstructor } from "@/lib/auth/dal";
 import { listSections } from "@/lib/data/courses";
+import { routeIds } from "@/lib/route-ids";
 
 export default async function NewAssignmentPage({ params }: PageProps<"/instructor/courses/[courseId]/assignments/new">) {
-  const { courseId } = await params;
+  const { courseId } = routeIds(await params);
   const user = await requireInstructor();
   const course = await courseForInstructor(user, courseId);
   const sections = await listSections(course.id);

@@ -48,7 +48,7 @@ function NavLinks({ links, pathname, onNavigate }: { links: NavItem[]; pathname:
         const heading = l.group && l.group !== links[i - 1]?.group ? l.group : null;
         return (
           <li key={l.href}>
-            {heading && <p className="mb-1 mt-4 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted/80">{heading}</p>}
+            {heading && <p className="mb-1 mt-4 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">{heading}</p>}
             <Link
               href={l.href}
               onClick={onNavigate}

@@ -1,4 +1,5 @@
 import { AppShell } from "@/components/app-shell";
+import { aiEnabled } from "@/lib/ai";
 
 export default function StudentLayout({ children }: LayoutProps<"/student">) {
   return (
@@ -10,7 +11,8 @@ export default function StudentLayout({ children }: LayoutProps<"/student">) {
         { href: "/student/catalog", label: "Course catalogue", icon: "catalog", group: "Learning" },
         { href: "/student/grades", label: "Grades", icon: "grades", group: "Learning" },
         { href: "/student/calendar", label: "Calendar", icon: "calendar", group: "Learning" },
-        { href: "/student/tutor", label: "AI tutor", icon: "bot", group: "Tools" },
+        // Shown only when an AI server is configured (OLLAMA_URL), read when the app is built.
+        ...(aiEnabled() ? [{ href: "/student/tutor", label: "AI tutor", icon: "bot", group: "Tools" } as const] : []),
         { href: "/student/boards", label: "Whiteboards", icon: "board", group: "Tools" },
         { href: "/student/account", label: "Profile & security", icon: "shield", group: "You" },
       ]}

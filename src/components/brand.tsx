@@ -19,7 +19,7 @@ export function LogoMark({ className }: { className?: string }) {
 
 export function Logo({ href = "/", subtitle }: { href?: string; subtitle?: string }) {
   return (
-    <Link href={href} className="flex items-center gap-2.5" aria-label="eduWave home">
+    <Link href={href} className="flex items-center gap-2.5">
       <LogoMark />
       <span className="leading-tight">
         <span className="block text-[17px] font-semibold tracking-tight">

@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
-import { Bot, ShieldCheck } from "lucide-react";
+import { notFound } from "next/navigation";
+import { ShieldCheck } from "lucide-react";
 import { TutorChat } from "@/components/client/tutor-chat";
-import { Card, IconChip, PageHeader } from "@/components/ui";
+import { PageHeader } from "@/components/ui";
 import { aiEnabled } from "@/lib/ai";
 import { requireStudent } from "@/lib/auth/dal";
 
@@ -9,21 +10,8 @@ export const metadata: Metadata = { title: "AI tutor" };
 
 export default async function TutorPage() {
   await requireStudent();
-  if (!aiEnabled()) {
-    return (
-      <>
-        <PageHeader eyebrow="Tools" title="AI tutor" />
-        <Card className="bg-mesh mx-auto max-w-xl text-sm">
-          <IconChip size="lg"><Bot /></IconChip>
-          <p className="mt-4 font-medium">The AI tutor isn&apos;t switched on for your institution yet.</p>
-          <p className="mt-2 text-muted">
-            It runs on a free, open-source model through Ollama, so your questions stay on the institution&apos;s own server. Ask your
-            administrator to enable it (setup steps are in the project README).
-          </p>
-        </Card>
-      </>
-    );
-  }
+  // Not linked anywhere while AI is off; a direct visit gets a normal 404.
+  if (!aiEnabled()) notFound();
   return (
     <>
       <PageHeader

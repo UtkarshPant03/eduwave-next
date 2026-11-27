@@ -5,9 +5,6 @@ organised into weekly sections, assignments with grading and feedback, server-ti
 gradebook, discussions and announcements, a calendar, live classes, whiteboards and a private AI tutor,
 for **students**, **instructors** and **administrators**.
 
-It began as a rebuild of [eduWave](https://github.com/suraj719/eduWave), a MERN student project by
-suraj719, and has grown into a full LMS.
-
 **Everything is free and open-source.** No paid APIs, no API keys in the browser, nothing that needs a
 credit card. Optional extras (AI, email, hosted database) use free options.
 
@@ -67,7 +64,7 @@ courses and students from the admin console (individually or by CSV import).
 deactivate accounts instantly, create courses and assign instructors, publish/hide courses, review the
 site-wide audit log.
 
-**Instructors**: build courses week by week (sections, files, links, live classes); create
+**Instructors**: build courses week by week (sections, files, links, live classes); create and edit
 assignments (Markdown, late windows) and quizzes (shuffled, AI-drafted optionally); grade submissions
 with feedback from one queue; see quiz analytics and a full gradebook with CSV export; post
 announcements and moderate discussions; manage enrolment (by ID/email or an enrolment key).
@@ -101,12 +98,12 @@ sessions and sign-in history.
 
 | Feature | How to enable |
 |---|---|
-| AI tutor + AI quiz drafting | Install [Ollama](https://ollama.com), `ollama pull llama3.2`, set `OLLAMA_URL=http://localhost:11434` (8 GB+ RAM recommended) |
+| AI tutor + AI quiz drafting | Install [Ollama](https://ollama.com), `ollama pull llama3.2`, set `OLLAMA_URL=http://localhost:11434` **before `npm run build`** (the navigation is prerendered), 8 GB+ RAM recommended |
 | Email notifications | Any SMTP account in `.env.local`, e.g. a Gmail **App Password** |
 | Hosted database | Set `DATABASE_URL` (Neon/Supabase free tier), then `npm run db:migrate` |
 | Self-hosted video | Run Jitsi on campus and set `JITSI_DOMAIN` |
 
-Without them everything else works; AI pages show setup instructions and notifications stay in-app.
+Without them everything else works: AI features are hidden entirely, and notifications stay in-app.
 
 **Notes:** on meet.jit.si the first person in a room signs in to become moderator, so instructors
 should start the class first. Small local AI models make mistakes, so AI-drafted questions are drafts
@@ -114,6 +111,26 @@ for review. Files are stored in Postgres, which is fine for course materials and
 large media to object storage if needed.
 
 ---
+
+## Backups
+
+Back up before every term starts, before upgrades, and on a schedule (e.g. nightly).
+
+```bash
+npm run db:backup                                   # → backups/eduwave-<UTC time>.tar.gz (verified)
+npm run db:restore -- backups/eduwave-<…>.tar.gz    # old data is moved aside, not deleted
+```
+
+- **PGlite** (the default): stop the app first, as with `db:migrate`. Each backup is opened and read
+  back before the script reports success. The newest 14 are kept (`BACKUP_KEEP` to change).
+- **Postgres** (`DATABASE_URL`): uses `pg_dump`/`pg_restore` from the free PostgreSQL client tools;
+  the app can stay online. Restoring needs `--yes` because it overwrites live data. *This path is
+  written but not yet tested, because the test machine has no PostgreSQL tools.*
+- **Schedule it:** Windows Task Scheduler or `cron` running `npm run db:backup` in this folder. The
+  script exits with code 1 on any failure (including stopping early), so the scheduler can alert you.
+- **Keep a copy elsewhere.** A backup on the same disk is lost with the disk. Backups contain student
+  data and password hashes: keep them private. `backups/` is in `.gitignore`.
+- **Test a restore** each term on a spare machine. A backup you've never restored is a hope, not a plan.
 
 ## Security model
 
@@ -137,6 +154,8 @@ large media to object storage if needed.
 | CSV injection | Exports neutralise spreadsheet formulas |
 | Spam / abuse | Rate limits on enrolment keys, posts, replies and AI |
 | Auditability | Security events logged with IP; admins see a site-wide log |
+| Accidental data loss | Assignments/quizzes with student work can't be deleted (server rule); edits can't invalidate existing grades |
+| Information leaks on errors | Error pages show only a reference code; malformed URL IDs give "not found", never a database error |
 
 `npm audit --omit=dev` reports 0 vulnerabilities (vulnerable sub-dependencies of the whiteboard are
 pinned to patched versions via `overrides`). The full audit lists an old `esbuild` inside `drizzle-kit`,
@@ -160,8 +179,8 @@ src/
   app/actions/*.ts        Server Actions (all writes): validate → authorise → mutate → notify
   app/admin|instructor|student/…   role areas (each page has a loading skeleton)
   components/             UI primitives, course components, client components
-scripts/                  migrate, seed, create-admin
-tests/e2e.mjs             end-to-end browser test
+scripts/                  migrate, seed, create-admin, backup, restore
+tests/                    e2e.mjs (main flows), stability.mjs (data safety, timer, email)
 docs/FEATURES.md          feature catalogue & project guide
 ```
 
@@ -174,14 +193,26 @@ docs/FEATURES.md          feature catalogue & project guide
 | `db:generate` | After editing `src/db/schema.ts`, generate a SQL migration |
 | `db:migrate`, `db:seed` | Apply migrations, load sample data |
 | `create-admin` | Create the first administrator on a clean install |
-| `test:e2e` | Browser test of the main flows |
+| `test:e2e`, `test:stability`, `test:a11y` | Browser tests: main flows; data safety, timer and email; accessibility |
+| `db:backup`, `db:restore` | Verified database backup with rotation; restore that keeps the old data aside |
+
+## Troubleshooting
+
+- **A CSS change doesn't appear after `npm run build`:** delete the `.next` folder and build again. We
+  saw the build cache reuse an old `globals.css` once.
+- **`db:migrate`/`db:seed` hangs or fails with PGlite:** another process (usually the app) has
+  `.pglite/` open. Stop it first.
 
 ## Testing
 
 ```bash
 rm -rf .pglite && npm run db:migrate && npm run db:seed
-npm run build && npm start -- -p 3100          # leave OLLAMA_URL unset
-npm run test:e2e                                # second terminal
+npm run build
+# leave OLLAMA_URL unset; the SMTP settings point at the test's fake mail server
+SMTP_HOST=127.0.0.1 SMTP_PORT=2525 SMTP_USER=test SMTP_PASS=test npm start -- -p 3100
+npm run test:e2e          # second terminal, ~1 min
+npm run test:stability    # ~2 min (waits for a real 1-minute quiz timer)
+npm run test:a11y         # ~2 min, accessibility scan of ~30 pages × light/dark
 ```
 
 **42 checks** across all three roles: security headers and redirects; admin creates a student and a
@@ -192,5 +223,17 @@ calendar; cross-user security (exports, other students' files, non-enrolled cour
 courses); grading with a server-enforced maximum, CSV export, grade notification; instant deactivation;
 account lockout. Uses the installed Edge (`BROWSER_CHANNEL=chrome` for Chrome).
 
-**Not covered automatically:** timer expiry (auto-submit at zero), email delivery, whiteboard
-collaboration, and AI output quality. The AI integration was tested against a mock Ollama server.
+**15 stability checks:** malformed URL IDs give a not-found page; AI hidden while not configured;
+graded work can't be deleted; editing can't push the maximum below an awarded grade; deadline
+extensions round-trip exactly and notify students in-app and by email (BCC, plain text, captured by
+`tests/smtp-catcher.mjs`, so nothing is really sent); quiz editing locks after the first attempt; the
+timer auto-submits at zero; an abandoned attempt is closed and graded by the server.
+
+**Accessibility scan:** axe-core checks about 30 pages for all three roles, in light and dark theme,
+against WCAG 2.1 A/AA (contrast, labels, names, nesting, ARIA). It currently reports no violations.
+Automated tools catch only part of the problems: also try each flow with the keyboard alone and with
+a screen reader (NVDA is free on Windows).
+
+**Not covered automatically:** whiteboard collaboration, and the AI features (switched off by
+default; to be re-tested when AI is enabled). Streamed pages that end in "not found" keep HTTP
+status 200 with a `noindex` tag; this is standard Next.js streaming behaviour.
