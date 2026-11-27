@@ -14,9 +14,10 @@ import { courseOutline } from "@/lib/data/courses";
 import { gradebook } from "@/lib/data/gradebook";
 import { formatDateTime, formatPercent, formatRelative, requestTime } from "@/lib/format";
 import { jitsiLink } from "@/lib/live";
+import { routeIds } from "@/lib/route-ids";
 
 export default async function StudentCoursePage({ params }: PageProps<"/student/courses/[courseId]">) {
-  const { courseId } = await params;
+  const { courseId } = routeIds(await params);
   const user = await requireStudent();
   const course = await courseForStudent(user, courseId);
   const now = requestTime();

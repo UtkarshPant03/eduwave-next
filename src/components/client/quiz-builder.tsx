@@ -1,20 +1,52 @@
 "use client";
 
-import { ArrowDown, ArrowUp, Copy, Plus, Shuffle, Sparkles, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Copy, Lock, Plus, Shuffle, Sparkles, Trash2 } from "lucide-react";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { aiDraftQuestions, createQuiz } from "@/app/actions/instructor";
+import { aiDraftQuestions, createQuiz, updateQuiz } from "@/app/actions/instructor";
 import { Button, Card, Field, FormMessage, Input, Select, Textarea } from "@/components/ui";
 import { Dialog } from "./dialog";
+import { LocalDateTimeInput } from "./local-datetime-input";
 
 type DraftQuestion = { key: number; prompt: string; options: string[]; correctIndex: number; explanation: string };
 
 let nextKey = 1;
 const blankQuestion = (): DraftQuestion => ({ key: nextKey++, prompt: "", options: ["", "", "", ""], correctIndex: -1, explanation: "" });
 
-export function QuizBuilder({ courseId, sections, aiAvailable }: { courseId: string; sections: { id: string; title: string }[]; aiAvailable: boolean }) {
-  const [questions, setQuestions] = useState<DraftQuestion[]>(() => [blankQuestion()]);
-  const [shuffle, setShuffle] = useState(true);
+export type QuizInitial = {
+  id: string;
+  title: string;
+  description: string | null;
+  sectionId: string | null;
+  timeLimitMinutes: number;
+  deadline: string;
+  shuffle: boolean;
+  questions: { prompt: string; options: string[]; correctIndex: number; explanation: string | null }[];
+  /** Students who have started: questions and the time limit are then locked. */
+  attemptCount: number;
+  /** The answer key is visible after the deadline, so a passed deadline is fixed. */
+  deadlinePassed: boolean;
+};
+
+/** Creates a quiz, or with `initial` edits one (within the limits the server enforces). */
+export function QuizBuilder({
+  courseId,
+  sections,
+  aiAvailable,
+  initial,
+}: {
+  courseId: string;
+  sections: { id: string; title: string }[];
+  aiAvailable: boolean;
+  initial?: QuizInitial;
+}) {
+  const locked = (initial?.attemptCount ?? 0) > 0;
+  const [questions, setQuestions] = useState<DraftQuestion[]>(() =>
+    initial?.questions.length
+      ? initial.questions.map((q) => ({ key: nextKey++, prompt: q.prompt, options: [...q.options], correctIndex: q.correctIndex, explanation: q.explanation ?? "" }))
+      : [blankQuestion()],
+  );
+  const [shuffle, setShuffle] = useState(initial?.shuffle ?? true);
   const [error, setError] = useState<string>();
   const [aiOpen, setAiOpen] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -33,7 +65,7 @@ export function QuizBuilder({ courseId, sections, aiAvailable }: { courseId: str
     e.preventDefault();
     const form = new FormData(e.currentTarget);
     const deadlineLocal = String(form.get("deadline") ?? "");
-    const missing = questions.findIndex((q) => q.correctIndex < 0);
+    const missing = locked ? -1 : questions.findIndex((q) => q.correctIndex < 0);
     if (missing >= 0) {
       setError(`Pick the correct option for question ${missing + 1}.`);
       document.getElementById(`q-${questions[missing].key}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -42,21 +74,24 @@ export function QuizBuilder({ courseId, sections, aiAvailable }: { courseId: str
     setError(undefined);
     startTransition(async () => {
       // On success the action redirects; we only get a value back on failure.
-      const result = await createQuiz({
-        courseId,
+      const fields = {
         sectionId: String(form.get("sectionId") ?? ""),
         title: String(form.get("title")),
         description: String(form.get("description") ?? ""),
-        timeLimitMinutes: Number(form.get("timeLimitMinutes")),
+        // Disabled inputs aren't submitted, so locked fields keep their saved values.
+        timeLimitMinutes: locked && initial ? initial.timeLimitMinutes : Number(form.get("timeLimitMinutes")),
         // datetime-local has no time zone; interpret it in the instructor's browser zone.
-        deadline: deadlineLocal ? new Date(deadlineLocal).toISOString() : "",
+        deadline: initial?.deadlinePassed ? initial.deadline : deadlineLocal ? new Date(deadlineLocal).toISOString() : "",
         shuffle,
-        questions: questions.map((q) => {
-          // Drop empty optional options, keeping the correct answer's index aligned.
-          const kept = q.options.map((o, i) => ({ o: o.trim(), i })).filter((x) => x.o !== "");
-          return { prompt: q.prompt, options: kept.map((x) => x.o), correctIndex: kept.findIndex((x) => x.i === q.correctIndex), explanation: q.explanation.trim() || undefined };
-        }),
+      };
+      const drafted = questions.map((q) => {
+        // Drop empty optional options, keeping the correct answer's index aligned.
+        const kept = q.options.map((o, i) => ({ o: o.trim(), i })).filter((x) => x.o !== "");
+        return { prompt: q.prompt, options: kept.map((x) => x.o), correctIndex: kept.findIndex((x) => x.i === q.correctIndex), explanation: q.explanation.trim() || undefined };
       });
+      const result = initial
+        ? await updateQuiz({ id: initial.id, ...fields, questions: locked ? undefined : drafted })
+        : await createQuiz({ courseId, ...fields, questions: drafted });
       if (result?.error) setError(result.error);
     });
   }
@@ -65,26 +100,42 @@ export function QuizBuilder({ courseId, sections, aiAvailable }: { courseId: str
     <form onSubmit={handleSubmit} className="space-y-6">
       <Card title="Details">
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Title"><Input name="title" required maxLength={160} placeholder="Quiz 1: Arrays and linked lists" /></Field>
+          <Field label="Title"><Input name="title" required maxLength={160} defaultValue={initial?.title} placeholder="Quiz 1: Arrays and linked lists" /></Field>
           <Field label="Section">
-            <Select name="sectionId" defaultValue={sections[0]?.id ?? ""}>
+            <Select name="sectionId" defaultValue={initial ? (initial.sectionId ?? "") : (sections[0]?.id ?? "")}>
               <option value="">General</option>
               {sections.map((s) => <option key={s.id} value={s.id}>{s.title}</option>)}
             </Select>
           </Field>
-          <Field label="Time limit (minutes)"><Input name="timeLimitMinutes" type="number" min={1} max={300} defaultValue={20} required /></Field>
-          <Field label="Deadline" hint="Students can't start after this; answers and explanations are revealed after it.">
-            <Input name="deadline" type="datetime-local" required />
+          <Field label="Time limit (minutes)" hint={locked ? "Locked: students have started." : undefined}>
+            <Input name="timeLimitMinutes" type="number" min={1} max={300} defaultValue={initial?.timeLimitMinutes ?? 20} required disabled={locked} />
+          </Field>
+          <Field
+            label="Deadline"
+            hint={initial?.deadlinePassed ? "Fixed: the deadline has passed and answers are visible." : "Students can't start after this; answers and explanations are revealed after it."}
+          >
+            <LocalDateTimeInput name="deadline" iso={initial?.deadline} required disabled={initial?.deadlinePassed} />
           </Field>
         </div>
-        <div className="mt-3"><Field label="Instructions (optional)"><Input name="description" maxLength={2000} placeholder="Closed book. One attempt." /></Field></div>
+        <div className="mt-3"><Field label="Instructions (optional)"><Input name="description" maxLength={2000} defaultValue={initial?.description ?? ""} placeholder="Closed book. One attempt." /></Field></div>
         <label className="mt-4 flex items-center gap-3 text-sm">
           <input type="checkbox" checked={shuffle} onChange={(e) => setShuffle(e.target.checked)} className="size-4 accent-[var(--accent)]" />
           <Shuffle className="size-4 text-muted" /> Shuffle question and option order for each student <span className="text-muted">(reduces copying)</span>
         </label>
       </Card>
 
-      {aiAvailable && (
+      {locked && (
+        <div className="flex items-start gap-3 rounded-2xl border border-warning/40 bg-warning/10 p-4 text-sm">
+          <Lock className="mt-0.5 size-4 shrink-0 text-warning" />
+          <p>
+            {initial?.attemptCount} student{initial?.attemptCount === 1 ? " has" : "s have"} started this quiz, so its {questions.length} questions
+            and the time limit are locked: changing them now would make attempts unfair.{" "}
+            {initial?.deadlinePassed ? "You can still edit the other details above." : "You can still edit the details above and extend the deadline."}
+          </p>
+        </div>
+      )}
+
+      {aiAvailable && !locked && (
         <div className="bg-mesh flex flex-wrap items-center gap-3 rounded-2xl border border-accent/30 p-4 text-sm">
           <Sparkles className="size-5 text-accent" />
           <span className="flex-1">Paste lecture notes or a textbook passage and let the on-campus AI draft questions for you to review.</span>
@@ -92,7 +143,7 @@ export function QuizBuilder({ courseId, sections, aiAvailable }: { courseId: str
         </div>
       )}
 
-      {questions.map((q, i) => (
+      {!locked && questions.map((q, i) => (
         <Card
           key={q.key}
           title={`Question ${i + 1}`}
@@ -135,8 +186,10 @@ export function QuizBuilder({ courseId, sections, aiAvailable }: { courseId: str
       ))}
 
       <div className="sticky bottom-0 z-10 -mx-4 flex flex-wrap items-center gap-3 border-t border-border bg-background/90 px-4 py-3 backdrop-blur">
-        <Button type="button" variant="secondary" onClick={() => setQuestions((qs) => [...qs, blankQuestion()])}><Plus className="size-4" /> Add question</Button>
-        <Button type="submit" disabled={pending}>{pending ? "Publishing…" : `Publish quiz (${questions.length} question${questions.length === 1 ? "" : "s"})`}</Button>
+        {!locked && <Button type="button" variant="secondary" onClick={() => setQuestions((qs) => [...qs, blankQuestion()])}><Plus className="size-4" /> Add question</Button>}
+        <Button type="submit" disabled={pending}>
+          {initial ? (pending ? "Saving…" : "Save changes") : pending ? "Publishing…" : `Publish quiz (${questions.length} question${questions.length === 1 ? "" : "s"})`}
+        </Button>
         <FormMessage state={{ error }} />
       </div>
 

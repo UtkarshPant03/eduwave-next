@@ -65,7 +65,7 @@ export async function CalendarPage({ role, searchParams }: { role: Exclude<Role,
               const inMonth = d.getUTCMonth() === m - 1;
               const list = byDay.get(key) ?? [];
               return (
-                <div key={key} className={cx("min-h-24 bg-surface p-1.5", !inMonth && "bg-surface-2/50 text-muted/60")}>
+                <div key={key} className={cx("min-h-24 bg-surface p-1.5", !inMonth && "bg-surface-2/50 text-muted")}>
                   <span className={cx("mb-1 grid size-6 place-items-center rounded-full text-[11px] tabular-nums", key === todayKey && "bg-brand font-semibold text-white")}>
                     {d.getUTCDate()}
                   </span>
@@ -77,11 +77,16 @@ export async function CalendarPage({ role, searchParams }: { role: Exclude<Role,
                           <Link
                             href={hrefFor(e)}
                             title={`${e.courseCode}: ${e.title} · ${formatTime(e.at)}`}
-                            className={cx("flex items-center gap-1 truncate rounded-md px-1.5 py-0.5 text-[11px] text-white transition hover:brightness-110", e.done && "opacity-50 line-through")}
-                            style={{ background: coverFor(e.color).from }}
+                            className={cx(
+                              "flex items-center gap-1 truncate rounded-md px-1.5 py-0.5 text-[11px] transition hover:brightness-110",
+                              // Done items: muted but still readable (fading with opacity failed contrast checks).
+                              e.done ? "border-l-[3px] bg-surface-2 text-muted line-through" : "text-white",
+                            )}
+                            style={e.done ? { borderLeftColor: coverFor(e.color).from } : { background: coverFor(e.color).from }}
                           >
                             <Icon className="size-3 shrink-0" />
                             <span className="truncate">{e.title}</span>
+                            {e.done && <span className="sr-only"> (done)</span>}
                           </Link>
                         </li>
                       );

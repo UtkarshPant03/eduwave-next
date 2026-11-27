@@ -1,14 +1,16 @@
-import { CheckCircle2, ChevronDown, Clock, FileText, Inbox, Paperclip, Users } from "lucide-react";
+import Link from "next/link";
+import { CheckCircle2, ChevronDown, Clock, FileText, Inbox, Paperclip, Pencil, Users } from "lucide-react";
 import { gradeSubmission } from "@/app/actions/instructor";
 import { ActionForm } from "@/components/action-form";
 import { Markdown } from "@/components/markdown";
-import { Avatar, Badge, Card, Field, Input, PageHeader, StatTile, Textarea } from "@/components/ui";
+import { Avatar, Badge, buttonClass, Card, Field, Input, PageHeader, StatTile, Textarea } from "@/components/ui";
 import { requireInstructor } from "@/lib/auth/dal";
 import { getAssignmentForInstructor } from "@/lib/data/assessments";
 import { formatDateTime, formatPercent } from "@/lib/format";
+import { routeIds } from "@/lib/route-ids";
 
 export default async function GradeAssignmentPage({ params }: PageProps<"/instructor/assignments/[assignmentId]">) {
-  const { assignmentId } = await params;
+  const { assignmentId } = routeIds(await params);
   const user = await requireInstructor();
   const { course, assignment, rows } = await getAssignmentForInstructor(user, assignmentId);
   const submitted = rows.filter((r) => r.submissionId);
@@ -24,6 +26,7 @@ export default async function GradeAssignmentPage({ params }: PageProps<"/instru
         eyebrow="Assignment"
         title={assignment.title}
         subtitle={`Due ${formatDateTime(assignment.dueAt)} · ${assignment.maxPoints} points · late window ${assignment.lateDays} day(s)`}
+        action={<Link href={`/instructor/assignments/${assignment.id}/edit`} className={buttonClass("secondary")}><Pencil className="size-4" /> Edit</Link>}
       />
 
       <div className="stagger mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">

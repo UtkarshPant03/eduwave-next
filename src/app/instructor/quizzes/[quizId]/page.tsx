@@ -1,14 +1,16 @@
-import { CheckCircle2, Clock, Download, Target, Users } from "lucide-react";
+import Link from "next/link";
+import { CheckCircle2, Clock, Download, Pencil, Target, Users } from "lucide-react";
 import { ScoreDistribution } from "@/components/client/charts";
 import { Badge, buttonClass, Card, Empty, PageHeader, StatTile, Table } from "@/components/ui";
 import { requireInstructor } from "@/lib/auth/dal";
 import { getQuizAnalytics } from "@/lib/data/assessments";
 import { formatDateTime, formatPercent } from "@/lib/format";
+import { routeIds } from "@/lib/route-ids";
 
 const BUCKETS = ["0–20%", "21–40%", "41–60%", "61–80%", "81–100%"];
 
 export default async function QuizAnalyticsPage({ params }: PageProps<"/instructor/quizzes/[quizId]">) {
-  const { quizId } = await params;
+  const { quizId } = routeIds(await params);
   const user = await requireInstructor();
   const { course, quiz, questionStats, results, classSize } = await getQuizAnalytics(user, quizId);
 
@@ -26,7 +28,12 @@ export default async function QuizAnalyticsPage({ params }: PageProps<"/instruct
         eyebrow="Quiz analytics"
         title={quiz.title}
         subtitle={<>{quiz.timeLimitMinutes} min · due {formatDateTime(quiz.deadline)} {quiz.shuffle && <Badge>Shuffled</Badge>}</>}
-        action={<a href={`/instructor/quizzes/${quiz.id}/export`} className={buttonClass("secondary")}><Download className="size-4" /> Export CSV</a>}
+        action={
+          <>
+            <Link href={`/instructor/quizzes/${quiz.id}/edit`} className={buttonClass("secondary")}><Pencil className="size-4" /> Edit</Link>
+            <a href={`/instructor/quizzes/${quiz.id}/export`} className={buttonClass("secondary")}><Download className="size-4" /> Export CSV</a>
+          </>
+        }
       />
 
       <div className="stagger mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">

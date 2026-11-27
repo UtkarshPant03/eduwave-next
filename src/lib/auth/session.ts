@@ -11,7 +11,7 @@
 import "server-only";
 import { createHash, randomBytes } from "node:crypto";
 import { cookies, headers } from "next/headers";
-import { and, desc, eq, gt, ne } from "drizzle-orm";
+import { and, desc, eq, gt, lt, ne, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 
 export const SESSION_COOKIE = "eduwave_session";
@@ -29,6 +29,7 @@ export async function createSession(userId: string) {
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
   const userAgent = (await headers()).get("user-agent")?.slice(0, 300) ?? null;
   await db.insert(schema.sessions).values({ id: hashToken(token), userId, expiresAt, userAgent });
+  await pruneExpired();
 
   (await cookies()).set(SESSION_COOKIE, token, {
     httpOnly: true,
@@ -37,6 +38,17 @@ export async function createSession(userId: string) {
     path: "/",
     expires: expiresAt,
   });
+}
+
+/**
+ * Housekeeping, run on each sign-in so no scheduler is needed: removes expired sessions
+ * and rate-limit rows that are older than a day and not currently locking anyone out.
+ * Without this both tables would grow forever.
+ */
+async function pruneExpired() {
+  await db.delete(schema.sessions).where(lt(schema.sessions.expiresAt, new Date()));
+  const t = schema.loginThrottle;
+  await db.delete(t).where(sql`${t.windowStart} < now() - interval '1 day' and (${t.lockedUntil} is null or ${t.lockedUntil} < now())`);
 }
 
 /** Returns the signed-in user's id, or null if the cookie is missing, unknown or expired. */

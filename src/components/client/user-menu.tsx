@@ -22,9 +22,12 @@ export function UserMenu({ avatar, name, role, accountHref, logout }: { avatar: 
 
   return (
     <div className="relative" ref={ref}>
-      <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2 rounded-xl p-1 pr-2 hover:bg-surface-2" aria-expanded={open} aria-label="Account menu">
+      <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2 rounded-xl p-1 pr-2 hover:bg-surface-2" aria-expanded={open}>
+        {/* Named by its content (not aria-label) so the name contains everything visible,
+            including the avatar's initials: voice-control users can say what they see. */}
+        <span className="sr-only">Account menu: {name}</span>
         {avatar}
-        <ChevronDown className={`size-3.5 text-muted transition ${open ? "rotate-180" : ""}`} />
+        <ChevronDown aria-hidden className={`size-3.5 text-muted transition ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
         <div className="absolute right-0 z-50 mt-2 w-60 animate-pop rounded-2xl border border-border bg-surface p-2 shadow-card-lg">

@@ -7,9 +7,10 @@ import { getAssignmentForStudent } from "@/lib/data/assessments";
 import { formatBytes, formatDateTime, formatRelative, requestTime } from "@/lib/format";
 import { assignmentWindow } from "@/lib/grading";
 import { ACCEPT_ATTR } from "@/lib/uploads";
+import { routeIds } from "@/lib/route-ids";
 
 export default async function StudentAssignmentPage({ params }: PageProps<"/student/assignments/[assignmentId]">) {
-  const { assignmentId } = await params;
+  const { assignmentId } = routeIds(await params);
   const user = await requireStudent();
   const { course, assignment, submission } = await getAssignmentForStudent(user, assignmentId);
   const now = requestTime();

@@ -101,6 +101,7 @@ Your differentiator might be one well-chosen Advanced feature done properly, not
 | ADM-09 | Audit log | Standard | ✅ | Sign-ins, failures, lockouts, password changes, user/course changes, with time and IP. |
 | ADM-10 | Terms/semesters & archiving | Advanced | ⬜ | Courses grouped by term; past terms read-only. |
 | ADM-11 | Bulk enrolment by CSV (course roster upload) | Advanced | ⬜ | |
+| ADM-12 | Backup & restore | Core | ✅ | One command; the backup is verified by reading it back; old backups rotated; a failure (even a silent one) exits non-zero; restore never deletes the current data. |
 
 ### 3.3 Courses & content (`CRS`)
 
@@ -135,6 +136,8 @@ Your differentiator might be one well-chosen Advanced feature done properly, not
 | ASG-09 | Rubric-based grading | Advanced | ⬜ | Criteria × levels; grade computed from rubric. |
 | ASG-10 | Plagiarism / similarity hints | Advanced | ⬜ | Compare text submissions within a course. |
 | ASG-11 | Peer review | Advanced | ⬜ | Anonymous allocation of 2–3 reviewers per submission. |
+| ASG-12 | Edit after publishing | Core | ✅ | Change title, instructions, dates, points, late window. Maximum can't drop below a grade already awarded; students notified when the deadline changes. |
+| ASG-13 | Graded work can't be deleted | Core | ✅ | Deleting an assignment that has submissions is refused **by the server**, with a reason (a confirm dialog alone is not protection). |
 
 ### 3.5 Quizzes (`QZ`)
 
@@ -153,6 +156,7 @@ Your differentiator might be one well-chosen Advanced feature done properly, not
 | QZ-11 | Question bank & random selection | Advanced | ⬜ | |
 | QZ-12 | Other question types (short answer, numeric, code) | Advanced | ⬜ | |
 | QZ-13 | Accommodations (extra time per student) | Advanced | ⬜ | |
+| QZ-14 | Edit quiz with fairness locks | Standard | ✅ | Everything editable until the first attempt; then questions and time limit lock; a passed deadline can't be reopened (answers are already visible). Quizzes with attempts can't be deleted. |
 
 ### 3.6 Grades (`GRD`)
 
@@ -207,11 +211,12 @@ Your differentiator might be one well-chosen Advanced feature done properly, not
 | UI-02 | Light / dark / system theme | Standard | ✅ | No flash of wrong theme on load. |
 | UI-03 | Loading states | Standard | ✅ | Skeletons on every navigation; no blank screens. |
 | UI-04 | Toasts & inline form errors | Standard | ✅ | Form input kept when validation fails. |
-| UI-05 | Accessibility basics | Core | ✅ | Labels on every input, keyboard reachable controls, visible focus, ARIA on custom widgets, colour never the only signal. |
+| UI-05 | Accessibility basics | Core | ✅ | Labels on every input, keyboard reachable controls, visible focus, ARIA on custom widgets, colour never the only signal. An automated axe-core scan of every main page (light **and** dark theme) finds no WCAG 2.1 A/AA violations. |
 | UI-06 | Charts with accessible fallbacks | Standard | ✅ | Every chart has a table view or text equivalent. |
 | UI-07 | Breadcrumbs & clear navigation | Standard | ✅ | |
 | UI-08 | Internationalisation (Hindi/regional languages) | Advanced | ⬜ | |
 | UI-09 | Installable PWA / offline reading | Advanced | ⬜ | |
+| UI-10 | Friendly error and not-found pages | Core | ✅ | Unexpected errors show a page with *Try again* and a reference code, never stack traces or SQL. A malformed ID in a URL gives *not found*, not a server error. |
 
 ---
 
@@ -239,12 +244,19 @@ These apply to **every** tier. A project with a working UI but failing these is 
 ## 5. Quality requirements
 
 - **Testing:** an automated end-to-end test for each Core flow (eduWave's `tests/e2e.mjs` runs 42
-  checks). Add unit tests for pure logic (grading rules, timers, shuffling).
+  checks, and `tests/stability.mjs` 15 more: quiz timer expiry, email delivery to a fake SMTP server,
+  edit/delete rules, malformed URLs). Add unit tests for pure logic (grading rules, timers, shuffling).
+- **Accessibility:** run an automated checker (axe-core, free) on every page in every theme, then test
+  by keyboard and screen reader. Don't fade text with `opacity` to show "inactive": it fails contrast.
+- **Operations:** backups that are verified and restorable, and a written restore procedure.
 - **Reproducibility:** one-command setup from a clean clone, seed data, documented environment variables.
 - **Code quality:** typecheck and lint pass with zero errors; no dead code; comments explain *why*.
 - **Performance:** dashboard loads in under 2 s with 50 courses and 2,000 students of seed data
   (write a seed script to prove it).
-- **Data integrity:** use database constraints (unique, foreign keys) for rules that must never break.
+- **Data integrity:** use database constraints (unique, foreign keys) for rules that must never break,
+  and check what a delete *cascades* to: one click must never erase students' grades.
+- **Graceful failure:** an unavailable optional service (email, AI) must not break the action that
+  triggered it; an unexpected error shows a friendly page, not a crash.
 
 ---
 
@@ -315,6 +327,8 @@ Add a row whenever a feature's status changes. Newest first.
 
 | Date | Version | Change | Feature IDs |
 |---|---|---|---|
+| 2026-11-27 | 3.2 | Verified backup & restore scripts; accessibility scan in light/dark with all WCAG 2.1 A/AA violations fixed (contrast, accessible names, nested controls) | ADM-12, UI-05 |
+| 2026-11-27 | 3.1 | Stability pass: edit assignments and quizzes, graded work protected from deletion, error and not-found pages, malformed URL IDs handled, AI hidden while not configured, expired-session cleanup, stability test suite | ASG-12..13, QZ-14, UI-10 |
 | 2026-11-27 | 3.0 | University LMS: admin console, courses & enrolment, sections, assignments, gradebook, discussions, calendar, catalogue, profiles, command palette, redesigned UI | AUTH-05..11, ADM-01..09, CRS-01..10, ASG-01..08, GRD-01..05, COM-01..06, SCH-01..02, TOOL-05, UI-01..07 |
 | 2026-11-26 | 2.0 | File uploads, Jitsi live classes, whiteboards, local AI tutor & quiz drafting, notifications, lockout, audit log, per-student shuffling | CRS-04, SCH-03, TOOL-01..04, QZ-06..10, AUTH-08..09, COM-04..05 |
 | 2026-11-26 | 1.0 | Next.js rebuild of the MERN prototype: secure auth, server-graded quizzes | AUTH-01..04, QZ-01..05 |
@@ -342,4 +356,6 @@ design independently first.*
 | Notifications | `src/lib/notify.ts`, `src/components/client/notification-bell.tsx` |
 | AI | `src/lib/ai.ts`, `src/app/api/ai/chat/route.ts` |
 | Security headers | `next.config.ts` |
-| Tests | `tests/e2e.mjs` |
+| Error handling | `src/app/**/error.tsx`, `src/app/global-error.tsx`, `src/app/not-found.tsx`, `src/lib/route-ids.ts` |
+| Backups | `scripts/backup.ts`, `scripts/restore.ts` |
+| Tests | `tests/e2e.mjs`, `tests/stability.mjs`, `tests/smtp-catcher.mjs`, `tests/a11y.mjs` |

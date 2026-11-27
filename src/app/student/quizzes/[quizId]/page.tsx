@@ -7,9 +7,10 @@ import { requireStudent } from "@/lib/auth/dal";
 import { getStudentQuiz } from "@/lib/data/assessments";
 import { formatDateTime, requestTime } from "@/lib/format";
 import { attemptEndsAt } from "@/lib/quiz-engine";
+import { routeIds } from "@/lib/route-ids";
 
 export default async function StudentQuizPage({ params }: PageProps<"/student/quizzes/[quizId]">) {
-  const { quizId } = await params;
+  const { quizId } = routeIds(await params);
   const user = await requireStudent();
   const { course, quiz, attempt, questions, revealAnswers } = await getStudentQuiz(user, quizId);
   const now = requestTime();

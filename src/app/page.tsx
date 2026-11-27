@@ -3,7 +3,6 @@ import {
   ArrowRight,
   BarChart3,
   BellRing,
-  Bot,
   CalendarDays,
   CheckCircle2,
   ClipboardCheck,
@@ -31,7 +30,7 @@ const FEATURES = [
   { icon: MessagesSquare, title: "Discussions", body: "Course forums with pinned announcements, replies, moderation and notifications." },
   { icon: Video, title: "Live classes", body: "Scheduled video sessions on open-source Jitsi Meet. No licence fees, no installs." },
   { icon: CalendarDays, title: "Calendar", body: "Every deadline and live class across all your courses in one month view." },
-  { icon: Bot, title: "Private AI tutor", body: "Open models running on your own server via Ollama. Student questions never leave campus." },
+  { icon: GraduationCap, title: "Self-enrolment", body: "A course catalogue where students join with an enrolment key, or instructors add them by student ID." },
   { icon: PenTool, title: "Whiteboards", body: "Sketch, diagram and share boards with a class, autosaved as you draw." },
   { icon: BarChart3, title: "Analytics", body: "Score distributions, per-question breakdowns and progress against the class average." },
   { icon: BellRing, title: "Notifications", body: "In-app alerts for new work, grades and announcements, with optional email." },
@@ -42,7 +41,7 @@ const ROLES = [
   {
     icon: GraduationCap,
     title: "For students",
-    points: ["One dashboard for every course and deadline", "Submit work, take quizzes, track grades", "Discuss with classmates and ask the AI tutor", "Study timer and personal to-do list"],
+    points: ["One dashboard for every course and deadline", "Submit work, take quizzes, track grades", "Discuss with classmates in course forums", "Study timer and personal to-do list"],
   },
   {
     icon: Users,
@@ -56,7 +55,7 @@ const ROLES = [
   },
 ];
 
-const STACK = ["Next.js", "TypeScript", "PostgreSQL", "Drizzle ORM", "Tailwind CSS", "Jitsi Meet", "Ollama", "Excalidraw"];
+const STACK = ["Next.js", "TypeScript", "PostgreSQL", "Drizzle ORM", "Tailwind CSS", "Jitsi Meet", "Excalidraw"];
 
 export default function Home() {
   return (

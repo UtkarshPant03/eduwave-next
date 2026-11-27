@@ -19,9 +19,10 @@ import { db } from "@/db";
 import { formatDate, formatRelative, requestTime } from "@/lib/format";
 import { jitsiLink } from "@/lib/live";
 import { ACCEPT_ATTR } from "@/lib/uploads";
+import { routeIds } from "@/lib/route-ids";
 
 export default async function InstructorCoursePage({ params }: PageProps<"/instructor/courses/[courseId]">) {
-  const { courseId } = await params;
+  const { courseId } = routeIds(await params);
   const user = await requireInstructor();
   const course = await courseForInstructor(user, courseId);
   const now = requestTime();

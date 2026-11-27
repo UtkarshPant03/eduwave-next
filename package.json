@@ -10,9 +10,13 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
+    "db:backup": "tsx scripts/backup.ts",
+    "db:restore": "tsx scripts/restore.ts",
     "typecheck": "tsc --noEmit",
     "postinstall": "node scripts/copy-excalidraw-assets.mjs",
     "test:e2e": "node tests/e2e.mjs",
+    "test:stability": "node tests/stability.mjs",
+    "test:a11y": "node tests/a11y.mjs",
     "create-admin": "tsx scripts/create-admin.ts"
   },
   "dependencies": {
@@ -42,6 +46,7 @@
     "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "axe-core": "^4.14.1",
     "drizzle-kit": "^0.31.11",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
