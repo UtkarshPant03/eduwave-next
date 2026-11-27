@@ -7,11 +7,12 @@ All tests use free tools: Playwright driving an installed browser (Edge by defau
 | Command | What it proves | Checks |
 |---|---|---|
 | `npm run lint`, `npm run typecheck`, `npm run build` | Static correctness; the production build compiles | n/a |
-| `npm run test:unit` | Pure logic: grade bands and rounding, totals, submission windows, quiz timing and grace, shuffling, upload validation (PDF, OOXML, WebP, text), download disposition, CSV formula escaping and filenames | 21 |
+| `npm run test:unit` | Pure logic: grade bands and rounding, totals, submission windows, quiz timing and grace, shuffling, upload validation (PDF, OOXML, WebP, text), download disposition, CSV formula escaping and filenames, course-staff capabilities | 24 |
 | `npm run test:db` | Database-enforced integrity (cross-course and cross-quiz references, value ranges, grade limits, frozen answers and questions, completion-tick validity, append-only history, RESTRICT deletes) plus **real concurrency** between answer saving and finalisation | 22 |
 | `npm run test:e2e` | Full course lifecycle for all three roles, plus core security (headers, redirects, cross-user access, grading limits, deactivation, lockout) | 42 |
 | `npm run test:stability` | Data safety: graded work can't be deleted, edit rules, the quiz timer auto-submits, abandoned attempts are closed, email delivery, malformed URLs | 15 |
 | `npm run test:security` | Replays the audit's attacks, including **crafted Server Action calls**: mass assignment, information leaks, privilege escalation, hidden-course leaks, fake Office files, inline student PDFs, temp-password misuse, session rotation, log hygiene, spoofed `X-Forwarded-For` | 10 |
+| `npm run test:institution` | Phase 2: admin builds department → programme → session/term → batch → section, places students, links a course and enrols its sections; adds a TA; the primary instructor can't be removed; **crafted Server Action calls** by a TA (rename, move, delete sections) and by an instructor or student (admin actions) are refused | 14 |
 | `npm run test:a11y` | axe-core WCAG 2.1 A/AA scan of about 30 pages × 3 roles × light and dark theme | 0 violations |
 
 ## Running locally

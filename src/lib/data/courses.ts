@@ -5,7 +5,7 @@ import "server-only";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { finalizeExpiredAttempts } from "@/lib/quiz-engine";
-import { countOf, outer } from "./sql";
+import { countOf, outer, staffOf } from "./sql";
 
 const { courses, enrollments, users, sections, resources, files, assignments, quizzes, liveSessions, completions, attempts, submissions } =
   schema;
@@ -41,6 +41,7 @@ const courseCard = {
   published: courses.published,
 };
 
+/** Courses where the user is on the course staff (any role). */
 export function listInstructorCourses(instructorId: string) {
   return db
     .select({
@@ -51,7 +52,7 @@ export function listInstructorCourses(instructorId: string) {
         where a.course_id = ${outer("courses", "id")} and s.grade is null`),
     })
     .from(courses)
-    .where(eq(courses.instructorId, instructorId))
+    .where(staffOf(instructorId))
     .orderBy(desc(courses.term), asc(courses.code));
 }
 
@@ -188,7 +189,19 @@ export function paletteCourses(user: { id: string; role: "admin" | "instructor" 
           .innerJoin(enrollments, and(eq(enrollments.courseId, courses.id), eq(enrollments.userId, user.id)))
           .where(eq(courses.published, true))
       : user.role === "instructor"
-        ? base.where(eq(courses.instructorId, user.id))
+        ? base.where(staffOf(user.id))
         : base;
   return q.orderBy(desc(courses.term), asc(courses.code)).limit(100);
+}
+
+/** Course staff with names and roles (primary instructor first, then by role and name). */
+export function courseStaffList(courseId: string) {
+  const cs = schema.courseStaff;
+  return db
+    .select({ userId: cs.userId, role: cs.role, name: users.name, email: users.email, primary: sql<boolean>`${users.id} = ${courses.instructorId}` })
+    .from(cs)
+    .innerJoin(users, eq(users.id, cs.userId))
+    .innerJoin(courses, eq(courses.id, cs.courseId))
+    .where(eq(cs.courseId, courseId))
+    .orderBy(desc(sql`${users.id} = ${courses.instructorId}`), asc(cs.role), asc(users.name));
 }

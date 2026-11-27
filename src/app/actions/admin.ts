@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { refresh } from "next/cache";
-import { eq, inArray, or } from "drizzle-orm";
+import { eq, inArray, or, sql } from "drizzle-orm";
 import Papa from "papaparse";
 import { z } from "zod";
 import { db, schema } from "@/db";
@@ -183,8 +183,9 @@ const courseInput = z.object({
     .toUpperCase()
     .regex(/^[A-Z]{2,5}\s?\d{2,4}[A-Z]?$/, "Course code like CS201 or MATH 110."),
   title: z.string().trim().min(3, "Enter a title.").max(120),
-  department: z.string().trim().min(2, "Enter a department.").max(100),
-  term: z.string().trim().min(3, "Enter a term, e.g. Spring 2027.").max(40),
+  departmentId: z.uuid("Choose a department."),
+  termId: z.string().optional().transform((v) => v || null).pipe(z.uuid().nullable()),
+  term: z.string().trim().max(40).optional(),
   credits: z.coerce.number().int().min(0).max(12),
   instructorId: z.uuid("Choose an instructor."),
   description: optional(2000),
@@ -196,9 +197,24 @@ export async function createCourse(_: FormState, formData: FormData): Promise<Fo
   const admin = await requireAdmin();
   const parsed = courseInput.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: firstIssue(parsed.error) };
-  const { weeks, ...course } = parsed.data;
-  const instructor = await db.query.users.findFirst({ where: (u, { and, eq }) => and(eq(u.id, course.instructorId), eq(u.role, "instructor")) });
+  const { weeks, departmentId, termId, term: termText, ...rest } = parsed.data;
+  const instructor = await db.query.users.findFirst({ where: (u, { and, eq }) => and(eq(u.id, rest.instructorId), eq(u.role, "instructor")) });
   if (!instructor) return { error: "Choose a valid instructor." };
+  const dept = await db.query.departments.findFirst({ where: (d, { eq }) => eq(d.id, departmentId) });
+  if (!dept) return { error: "Choose a department." };
+  // A linked term names the course's term; otherwise the typed name is used (older style).
+  let term = termText ?? "";
+  if (termId) {
+    const [t] = await db
+      .select({ label: sql<string>`${schema.academicSessions.name} || ' · ' || ${schema.terms.name}` })
+      .from(schema.terms)
+      .innerJoin(schema.academicSessions, eq(schema.academicSessions.id, schema.terms.sessionId))
+      .where(eq(schema.terms.id, termId));
+    if (!t) return { error: "Choose a term." };
+    term = t.label;
+  }
+  if (term.length < 3) return { error: "Choose a term, or type one (e.g. Spring 2027)." };
+  const course = { ...rest, term, termId, departmentId: dept.id, department: dept.name };
 
   const id = await db.transaction(async (tx) => {
     const [row] = await tx.insert(schema.courses).values(course).onConflictDoNothing().returning({ id: schema.courses.id });

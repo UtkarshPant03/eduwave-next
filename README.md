@@ -53,9 +53,10 @@ All sample accounts use the password **`eduwave2026`**.
 | Instructor | `meera.iyer@eduwave.edu` | Teaches CS201 and CS204 (has a grading queue) |
 | Instructor | `rahul.verma@eduwave.edu` | Teaches MA202 |
 | Instructor | `sara.thomas@eduwave.edu` | Teaches HS101 |
+| Teaching assistant | `karan.mehra@eduwave.edu` | TA on CS201: can grade and moderate, can't change the course |
 | Student | `24CS1001` … `24CS1012` | Student ID or email; enrolled in 3–4 courses |
 
-The seed creates one term ("Autumn 2026") with 4 courses, weekly sections, real public learning
+The seed creates an academic structure (one department, programme, batch with sections A and B, and the "2026–27 · Odd semester" term) with 4 courses, weekly sections, real public learning
 links, graded and pending assignments, a closed quiz with results, an open quiz, live classes,
 announcements and discussions, so every screen has realistic data.
 

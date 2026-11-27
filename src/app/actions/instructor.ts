@@ -7,6 +7,7 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/db";
 import { courseForInstructor } from "@/lib/access";
+import type { CourseCapability } from "@/lib/auth/capabilities";
 import { aiEnabled, generateQuestions, type GeneratedQuestion } from "@/lib/ai";
 import { requireInstructor } from "@/lib/auth/dal";
 import { rateLimit } from "@/lib/auth/throttle";
@@ -34,10 +35,10 @@ async function lockCourse(tx: Pick<typeof db, "select">, courseId: string) {
   await tx.select({ id: schema.courses.id }).from(schema.courses).where(eq(schema.courses.id, courseId)).for("update");
 }
 
-/** Authorise: signed-in instructor who owns this course. Every action starts here. */
-async function ownCourse(courseId: unknown) {
+/** Authorise: signed-in course staff with the capability (default: manage the course). */
+async function ownCourse(courseId: unknown, capability: CourseCapability = "course.manage") {
   const user = await requireInstructor();
-  const course = await courseForInstructor(user, uuid.parse(courseId));
+  const course = await courseForInstructor(user, uuid.parse(courseId), capability);
   return { user, course };
 }
 
@@ -388,7 +389,7 @@ export async function gradeSubmission(_: FormState, formData: FormData): Promise
     .innerJoin(schema.assignments, eq(schema.assignments.id, schema.submissions.assignmentId))
     .where(eq(schema.submissions.id, parsed.data.submissionId));
   if (!row) return { error: "Submission not found." };
-  const course = await courseForInstructor(user, row.a.courseId);
+  const course = await courseForInstructor(user, row.a.courseId, "grade.edit");
   const { grade } = parsed.data;
   const feedback = parsed.data.feedback || null;
 

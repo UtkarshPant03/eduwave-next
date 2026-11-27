@@ -1,5 +1,40 @@
 # Changelog
 
+## 4.1.0: Phase 2a, institutional foundation (2026-11-27)
+
+**Academic structure (migration `0003_institution`, additive)**
+- **The structure:** departments → programmes → batches → class sections; academic sessions → terms.
+- **Placements:** students are placed in one class section per term, so a section change between terms keeps its history.
+- **Admin page:** `/admin/structure`, for creating each level and placing students.
+
+**Course offerings**
+- Courses are linked to a department and a term.
+- New admin course page `/admin/courses/[id]`: academic links, course staff, linked class sections, and enrolment of whole sections. Command palette entries now open it.
+
+**Course staff and permissions**
+- **Staff roles:** several coordinators, instructors and teaching assistants per course.
+- **Capabilities:** authorisation now asks for a capability (`course.manage`, `grade.edit`, …) through `courseForInstructor(user, course, capability)`, which fails closed. Teaching assistants can view, grade and moderate, but not change a course; the interface hides what they can't use.
+- **Database rules:** course staff must be instructor accounts, section members must be student accounts, and the primary instructor is always on the staff.
+
+**Back-fill on upgrade**
+- Departments are created from existing course department names, and each course is linked to its department.
+- Each primary instructor becomes course staff.
+- Terms are linked by an admin, not guessed.
+
+**Sample data**
+- Department/programme/session/term/batch/section structure, students in sections A and B, and a teaching assistant (`karan.mehra@eduwave.edu`) on CS201.
+- Course terms now read "2026–27 · Odd semester".
+
+**Tests**
+- New `test:institution` suite (14 checks, including crafted-call attacks).
+- `test:db` goes from 22 to 29 checks; `test:unit` from 21 to 24.
+- Accessibility scan now covers the new admin pages.
+
+**Not yet (Phase 2b)**
+- Department-scoped administration (`role_assignments` exists but isn't used yet).
+- Editing and deactivating structure entries.
+- Staff management by course coordinators.
+
 ## 4.0.2: audit and baseline (2026-11-27)
 
 - **Audit documents:** `PRODUCT_VISION`, `REPOSITORY_AUDIT`, `FEATURE_INVENTORY`, `MOODLE_CAPABILITY_MATRIX` (checked against docs.moodle.org 5.3), `SECURITY_REVIEW` and `IMPLEMENTATION_ROADMAP`. ARCHITECTURE gains a target module map.

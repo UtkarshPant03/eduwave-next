@@ -22,6 +22,7 @@ import {
   boolean,
   check,
   customType,
+  date,
   foreignKey,
   index,
   integer,
@@ -108,6 +109,128 @@ export const auditLog = pgTable(
   (t) => [index().on(t.userId, t.createdAt), index().on(t.createdAt), index().on(t.action, t.createdAt)],
 );
 
+/* ============================ institution ============================ */
+/*
+ * The university's academic structure (Phase 2). Routine changes (a new programme,
+ * batch or section) are DATA, not code. Two independent axes:
+ *   departments → programmes → batches (intake year) → class sections ("A", "B")
+ *   academic sessions ("2026–27") → terms ("Odd semester")
+ * A student belongs to one class section per term (student_sections), so section
+ * changes between semesters keep their history.
+ */
+
+export const departments = pgTable("departments", {
+  id: uuid().primaryKey().defaultRandom(),
+  // Optional short code (e.g. "CSE"). Not invented: left empty until an admin sets it.
+  code: text().unique(),
+  name: text().notNull().unique(),
+  active: boolean().notNull().default(true),
+  createdAt: createdAt(),
+});
+
+export const programmes = pgTable(
+  "programmes",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    departmentId: uuid()
+      .notNull()
+      .references(() => departments.id, { onDelete: "restrict" }),
+    code: text(),
+    name: text().notNull(), // e.g. "B.Tech Computer Science and Engineering"
+    semesters: integer().notNull(),
+    active: boolean().notNull().default(true),
+    createdAt: createdAt(),
+  },
+  (t) => [unique().on(t.departmentId, t.name), check("programmes_semesters_check", sql`${t.semesters} between 1 and 16`)],
+);
+
+export const academicSessions = pgTable(
+  "academic_sessions",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    name: text().notNull().unique(), // e.g. "2026–27"
+    startsOn: date().notNull(),
+    endsOn: date().notNull(),
+  },
+  (t) => [check("academic_sessions_dates_check", sql`${t.endsOn} > ${t.startsOn}`)],
+);
+
+export const terms = pgTable(
+  "terms",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    sessionId: uuid()
+      .notNull()
+      .references(() => academicSessions.id, { onDelete: "restrict" }),
+    name: text().notNull(), // e.g. "Odd semester"
+    startsOn: date().notNull(),
+    endsOn: date().notNull(),
+  },
+  (t) => [unique().on(t.sessionId, t.name), check("terms_dates_check", sql`${t.endsOn} > ${t.startsOn}`)],
+);
+
+export const batches = pgTable(
+  "batches",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    programmeId: uuid()
+      .notNull()
+      .references(() => programmes.id, { onDelete: "restrict" }),
+    intakeYear: integer().notNull(),
+    name: text().notNull(), // e.g. "B.Tech CSE 2024"
+  },
+  (t) => [unique().on(t.programmeId, t.intakeYear), check("batches_year_check", sql`${t.intakeYear} between 1990 and 2200`)],
+);
+
+export const classSections = pgTable(
+  "class_sections",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    batchId: uuid()
+      .notNull()
+      .references(() => batches.id, { onDelete: "restrict" }),
+    name: text().notNull(), // e.g. "A"
+  },
+  (t) => [unique().on(t.batchId, t.name)],
+);
+
+/** A student's class section for a term (one per term; history kept across terms). */
+export const studentSections = pgTable(
+  "student_sections",
+  {
+    studentId: uuid()
+      .notNull()
+      .references((): AnyPgColumn => users.id, { onDelete: "restrict" }),
+    termId: uuid()
+      .notNull()
+      .references(() => terms.id, { onDelete: "restrict" }),
+    sectionId: uuid()
+      .notNull()
+      .references(() => classSections.id, { onDelete: "restrict" }),
+    assignedAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.studentId, t.termId] }), index().on(t.sectionId, t.termId)],
+);
+
+/** Scoped institutional roles (beyond a user's persona): e.g. department administrator. */
+export const scopedRoleEnum = pgEnum("scoped_role", ["department_admin", "hod", "dean"]);
+
+export const roleAssignments = pgTable(
+  "role_assignments",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    userId: uuid()
+      .notNull()
+      .references((): AnyPgColumn => users.id, { onDelete: "restrict" }),
+    role: scopedRoleEnum().notNull(),
+    departmentId: uuid()
+      .notNull()
+      .references(() => departments.id, { onDelete: "restrict" }),
+    createdAt: createdAt(),
+  },
+  (t) => [unique().on(t.userId, t.role, t.departmentId), index().on(t.departmentId)],
+);
+
 /* ============================== courses ============================== */
 
 export const courses = pgTable(
@@ -128,9 +251,55 @@ export const courses = pgTable(
     // Students can self-enrol with this key. null = enrolment closed (instructor adds students).
     enrollmentKey: text(),
     published: boolean().notNull().default(true),
+    // Links into the academic structure (nullable: older courses keep their text
+    // department/term until an admin links them; migration 0003 links departments).
+    departmentId: uuid().references(() => departments.id, { onDelete: "restrict" }),
+    termId: uuid().references(() => terms.id, { onDelete: "restrict" }),
     createdAt: createdAt(),
   },
-  (t) => [unique().on(t.code, t.term), index().on(t.instructorId), check("courses_credits_check", sql`${t.credits} >= 0`)],
+  (t) => [
+    unique().on(t.code, t.term),
+    index().on(t.instructorId),
+    index().on(t.departmentId),
+    index().on(t.termId),
+    check("courses_credits_check", sql`${t.credits} >= 0`),
+  ],
+);
+
+/**
+ * Who teaches a course. Several faculty can share an offering; teaching assistants
+ * get a narrower set of capabilities (see src/lib/auth/capabilities.ts).
+ * `courses.instructor_id` remains the primary instructor and is always also listed here.
+ */
+export const courseStaffRoleEnum = pgEnum("course_staff_role", ["coordinator", "instructor", "teaching_assistant"]);
+
+export const courseStaff = pgTable(
+  "course_staff",
+  {
+    courseId: uuid()
+      .notNull()
+      .references(() => courses.id, { onDelete: "cascade" }),
+    userId: uuid()
+      .notNull()
+      .references((): AnyPgColumn => users.id, { onDelete: "restrict" }),
+    role: courseStaffRoleEnum().notNull(),
+    addedAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.courseId, t.userId] }), index().on(t.userId)],
+);
+
+/** Which class sections take a course offering (used to enrol whole sections). */
+export const courseSections = pgTable(
+  "course_sections",
+  {
+    courseId: uuid()
+      .notNull()
+      .references(() => courses.id, { onDelete: "cascade" }),
+    sectionId: uuid()
+      .notNull()
+      .references(() => classSections.id, { onDelete: "restrict" }),
+  },
+  (t) => [primaryKey({ columns: [t.courseId, t.sectionId] }), index().on(t.sectionId)],
 );
 
 export const enrollments = pgTable(

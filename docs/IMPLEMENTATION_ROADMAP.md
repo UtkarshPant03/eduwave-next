@@ -110,8 +110,10 @@ Ordered by value to Graphic Era:
 | Completion integrity | P0 | — | Done (4.0.1) | 0002 migration | test:db (+3) | PGlite + PostgreSQL 18 | Pre-existing orphans kept (cleanup SQL documented) |
 | Phase 0 cleanup (A-05/06/07) | P0 | — | Done | activity.ts, charts.tsx, course page, ai.ts | lint, typecheck, build, e2e/stab/sec/a11y | 42/42, 15/15, 10/10, 0 violations | AI prompt change not exercised against a model |
 | Unit tests (A-04) | P0 | — | Done | tests/unit/logic.test.ts, package.json, ci.yml | test:unit (21) | 21/21 local | Not yet run in CI (runs on next push) |
-| Academic hierarchy | P1 | D1 (details) | Planned | schema, admin pages | db, sec, e2e | — | — |
-| Course staff + scoped permissions | P1 | hierarchy | Planned | dal, access, actions | sec | — | — |
+| Academic hierarchy (Phase 2a) | P1 | D1 (details) | **Done** | 0003 migration, schema.ts, data/institution.ts, actions/institution.ts, /admin/structure | test:db (+7), test:institution (14) | PGlite + PostgreSQL 18 (upgrade back-fill + fresh) | Create-only: no rename, deactivate or CSV upload yet |
+| Course staff + capability permissions (Phase 2a) | P1 | hierarchy | **Done** | capabilities.ts, access.ts, instructor actions, course page, /admin/courses/[id] | test:unit (+3), test:institution (TA crafted calls) | All suites green | Staff managed by admins only (not yet by coordinators) |
+| Enrol whole class sections (Phase 2a) | P1 | hierarchy | **Done** | enrolLinkedSections | test:institution | Placed students enrolled exactly | Admin only; no automatic sync when placements change |
+| Department-scoped administration (Phase 2b) | P1 | D1 | **Next** | role_assignments (table exists) | — | — | No UI or permission checks use `role_assignments` yet |
 | Attendance | P1 | hierarchy, D3 | Planned | — | — | — | — |
 | Question bank + types + attempts | P1 | — | Planned | — | — | — | — |
 | Gradebook categories/weights | P1 | D4 | Planned | — | — | — | — |

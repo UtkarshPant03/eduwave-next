@@ -81,8 +81,8 @@ try {
   await page.goto(`${BASE}/admin/courses`);
   await page.getByLabel("Code").fill(CODE);
   await page.getByLabel("Title").fill(`E2E Testing ${run}`);
-  await page.getByLabel("Department").fill("Computer Science & Engineering");
-  await page.getByLabel("Term").fill("Autumn 2026");
+  await page.locator("select[name=departmentId]").selectOption({ label: "Computer Science & Engineering" });
+  await page.locator("select[name=termId]").selectOption({ label: "2026–27 · Odd semester" });
   await page.getByLabel("Instructor").selectOption({ label: "Dr. Meera Iyer" });
   await page.getByLabel("Weekly sections").fill("3");
   await page.getByRole("button", { name: "Create course" }).click();

@@ -25,7 +25,7 @@ Roles: **A** admin · **I** instructor · **S** student. "Tests" names the suite
 | Forced change of issued passwords | all | `dal.ts` `requireUser` | users.must_change_password | sec | **Verified** | — |
 | Self-service password reset | — | — | — | — | **Missing** | Admin reset only. Needs reset tokens by email (Phase 6) |
 | Institutional SSO (OIDC/SAML) | — | — | — | — | **Missing** | Graphic Era IdP details unknown (decision D2) |
-| Roles: admin / instructor / student | all | `users.role` enum, `dal.ts` | users | e2e, sec | **Verified** | Three fixed roles. No HOD, coordinator, TA or department admin; no scoped permissions (Phase 2) |
+| Roles: admin / instructor / student personas + course-staff capabilities | all | `users.role`, `dal.ts`, `capabilities.ts` | users, course_staff | e2e, sec, institution | **Verified** | Course-level roles are done; department-level roles (HOD, department admin) are Phase 2b |
 | Profile, sessions list, sign out other devices | all | account page | users, sessions | — | **Implemented** | — |
 | Audit log (append-only, actor, trusted IP, filter, pagination) | A | `lib/audit.ts`, `/admin/audit` | audit_log | e2e, sec, db | **Verified** | — |
 
@@ -37,10 +37,11 @@ Roles: **A** admin · **I** instructor · **S** student. "Tests" names the suite
 | User list: search, role filter, pagination | A | `/admin/users` | users | e2e | **Verified** | — |
 | Course create (code, term, credits, department, instructor, weeks) | A | `createCourse` | courses, sections | e2e | **Verified** | Department and term are free text. No academic hierarchy |
 | Publish / hide course | A, I | `setCoursePublished`, settings | courses.published | sec | **Verified** | An instructor can override an admin's hide (accepted risk SEC-16) |
-| Departments, programmes, sessions, semesters, batches, sections | — | — | — | — | **Missing** | Core Graphic Era requirement (Phase 2) |
-| Course allocation to several faculty; TAs; coordinators | — | — | `courses.instructor_id` only | — | **Missing** | One instructor per course (Phase 2) |
-| Department-scoped administration | — | — | — | — | **Missing** | Phase 2 |
-| Admin course detail / edit / reassign instructor | — | `/admin/courses` (list only) | — | — | **Partial** | No detail page; palette links to the list |
+| Departments, programmes, sessions, terms, batches, class sections; per-term section placement | A | `/admin/structure`, `actions/institution.ts` | institution tables (0003) | db, institution | **Verified** (4.1) | Create-only; no rename, deactivate or bulk CSV upload |
+| Course staff: coordinator, instructor, TA; capability-based permissions | A, I | `capabilities.ts`, `access.ts`, `/admin/courses/[id]` | course_staff | unit, institution, sec | **Verified** (4.1) | Staff managed by admins only |
+| Course offering linked to department and term; enrol whole linked sections | A | `/admin/courses/[id]`, `enrolLinkedSections` | courses.department_id/term_id, course_sections | institution | **Verified** (4.1) | No automatic re-sync when placements change |
+| Department-scoped administration | — | `role_assignments` (table only) | role_assignments | — | **Partial** | Phase 2b: UI and permission checks |
+| Admin course detail (academic links, staff, sections) | A | `/admin/courses/[id]` | — | institution, a11y | **Verified** (4.1) | Title, code and credits are still edited by staff on the course settings page |
 | Reports (participation, activity, grades) | — | — | — | — | **Missing** | Only per-course gradebook CSV and quiz CSV |
 | Backup / restore (database level) | A (ops) | `scripts/backup.ts`, `restore.ts` | all | manual (PGlite and PostgreSQL) | **Verified** (manually) | No per-course backup or duplication |
 

@@ -13,6 +13,7 @@ export const SAMPLE_EMAILS = [
   "meera.iyer@eduwave.edu",
   "rahul.verma@eduwave.edu",
   "sara.thomas@eduwave.edu",
+  "karan.mehra@eduwave.edu",
 ] as const;
 
 export async function sampleAccountsPresent(): Promise<boolean> {

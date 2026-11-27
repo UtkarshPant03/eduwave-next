@@ -16,7 +16,7 @@ This reviews eduWave against the security requirements for a Graphic Era deploym
 | Authorisation (roles) | Correct but **coarse** | Every action authorised server-side (sec, e2e). Three global roles, so scoped administration (department, section) is impossible today (A-01, Phase 2) |
 | Role escalation / mass assignment | Tested | Admin actions require admin; moderation uses a strict schema (sec) |
 | IDOR / cross-course | Tested | Ownership checks, 404s, UUID validation (sec, e2e) |
-| Cross-section / cross-department | **Not applicable yet** | Sections and departments don't exist. Tests must be added with Phase 2 |
+| Cross-section / cross-department | Partly tested (4.1) | TA crafted calls can't change a course; instructors and students can't call institution (admin) actions; non-staff instructors get 404 (`test:institution`, `test:security`). **Department-scoped admins don't exist yet (Phase 2b)**; tests for them come with it |
 | CSRF | Server Action Origin checks; SameSite=Lax | — |
 | XSS | No raw-HTML sink; React elements only; CSP | `'unsafe-inline'` accepted (`SECURITY.md`) |
 | SQL injection | Parameterised Drizzle queries; `sql.raw` only for static identifiers | Reviewed |

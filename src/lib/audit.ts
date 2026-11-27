@@ -41,7 +41,9 @@ export type AuditAction =
   | "enrolment_added"
   | "enrolment_removed"
   | "activity_deleted"
-  | "grade_changed";
+  | "grade_changed"
+  | "structure_changed"
+  | "course_staff_changed";
 
 /**
  * Records a security or academic event. `userId` is the account the event is about;

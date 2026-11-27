@@ -61,7 +61,9 @@ for (const theme of ["light", "dark"]) {
 
   const admin = await (await context(theme)).newPage();
   await signIn(admin, "admin@eduwave.edu");
-  for (const p of ["/admin", "/admin/users", "/admin/courses", "/admin/audit", "/admin/account"]) await scan(admin, p, theme);
+  await admin.goto(`${BASE}/admin/courses`);
+  const adminCourse = await hrefOf(admin, "/admin/courses/", "CS201");
+  for (const p of ["/admin", "/admin/users", "/admin/courses", adminCourse, "/admin/structure", "/admin/audit", "/admin/account"]) await scan(admin, p, theme);
   await admin.context().close();
 
   const ins = await (await context(theme)).newPage();

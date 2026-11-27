@@ -40,10 +40,13 @@ export function CourseOutline({
   mode,
   now,
   liveLinks,
+  canManage = true,
 }: {
   courseId: string;
   sections: OutlineSection[];
   mode: "student" | "instructor";
+  /** Staff without course.manage (e.g. teaching assistants) see no editing controls. */
+  canManage?: boolean;
   now: number;
   /** Jitsi URLs keyed by live-session id (built on the server with the user's name). */
   liveLinks?: Record<string, string>;
@@ -59,13 +62,13 @@ export function CourseOutline({
           <div key={s.id ?? "general"} className="relative">
             {/* Controls sit beside the summary, not inside it: buttons nested in a <summary> are
                 nested interactive controls, which screen readers announce confusingly. */}
-            {mode === "instructor" && s.id && (
+            {mode === "instructor" && canManage && s.id && (
               <div className="absolute right-12 top-5 z-10">
                 <SectionControls courseId={courseId} sectionId={s.id} title={s.title} summary={s.summary ?? ""} />
               </div>
             )}
             <details open={idx < 3} className="group rounded-2xl border border-border bg-surface shadow-card">
-              <summary className={cx("flex cursor-pointer list-none items-center gap-3 px-5 py-4 [&::-webkit-details-marker]:hidden", mode === "instructor" && s.id && "pr-5 [&>div]:mr-32")}>
+              <summary className={cx("flex cursor-pointer list-none items-center gap-3 px-5 py-4 [&::-webkit-details-marker]:hidden", mode === "instructor" && canManage && s.id && "pr-5 [&>div]:mr-32")}>
                 <span className="grid size-8 place-items-center rounded-lg bg-surface-2 text-xs font-semibold tabular-nums text-muted">{s.id ? idx + (sections[0].id ? 1 : 0) : "·"}</span>
                 <div className="min-w-0 flex-1">
                   <h3 className="font-semibold">{s.title}</h3>
@@ -112,7 +115,7 @@ export function CourseOutline({
                       {mode === "student" && (item.kind === "resource" || item.kind === "live") && (
                         <CompletionToggle courseId={courseId} itemId={item.id} done={Boolean(item.done)} />
                       )}
-                      {mode === "instructor" && <DeleteActivityButton courseId={courseId} kind={item.kind} id={item.id} title={item.title} />}
+                      {mode === "instructor" && canManage && <DeleteActivityButton courseId={courseId} kind={item.kind} id={item.id} title={item.title} />}
                     </li>
                   );
                 })}

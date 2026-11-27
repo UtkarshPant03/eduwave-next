@@ -12,7 +12,7 @@ export async function GET() {
       courses: rows.map((c) => ({
         label: `${c.code} · ${c.title}`,
         hint: c.term,
-        href: user.role === "admin" ? base : `${base}/${c.id}`,
+        href: `${base}/${c.id}`,
         kind: "course",
       })),
     },

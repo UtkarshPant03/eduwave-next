@@ -12,6 +12,7 @@ import { assignmentWindow, courseTotal, letterFor } from "../../src/lib/grading"
 import { attemptEndsAt, buildLayout, GRACE_MS, isAttemptOpen } from "../../src/lib/quiz-engine";
 import { checkUpload, isInlineSafe, MAX_UPLOAD_BYTES } from "../../src/lib/uploads";
 import { csvResponse } from "../../src/lib/csv";
+import { staffCan } from "../../src/lib/auth/capabilities";
 
 const DAY = 86_400_000;
 
@@ -148,5 +149,21 @@ describe("CSV export", () => {
   it("sanitises the download filename", () => {
     const res = csvResponse("Quiz 1: Arrays/../../etc", [["a"]]);
     assert.match(res.headers.get("content-disposition") ?? "", /filename="Quiz_1_Arrays_etc\.csv"/);
+  });
+});
+
+describe("course staff capabilities", () => {
+  it("instructors and coordinators can do everything in their course", () => {
+    for (const role of ["instructor", "coordinator"] as const)
+      for (const cap of ["course.view", "course.manage", "grade.view", "grade.edit", "discussion.moderate"] as const) assert.equal(staffCan(role, cap), true);
+  });
+  it("teaching assistants can view, grade and moderate, but not manage the course", () => {
+    assert.equal(staffCan("teaching_assistant", "grade.edit"), true);
+    assert.equal(staffCan("teaching_assistant", "discussion.moderate"), true);
+    assert.equal(staffCan("teaching_assistant", "course.manage"), false);
+  });
+  it("non-staff can do nothing (fails closed)", () => {
+    assert.equal(staffCan(null, "course.view"), false);
+    assert.equal(staffCan(undefined, "grade.view"), false);
   });
 });

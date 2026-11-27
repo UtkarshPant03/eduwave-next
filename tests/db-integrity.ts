@@ -172,6 +172,47 @@ async function main() {
   const ghosts = await db.$count(schema.completions, eq(schema.completions.itemId, resA.id));
   check("deleting an item removes its completion ticks", ghosts === 0, `${ghosts} left`);
 
+  // ---- institution and course staff (migration 0003) -----------------------------------
+  const [staffRow] = await db.select().from(schema.courseStaff).where(eq(schema.courseStaff.courseId, courseA.id));
+  check("a course's primary instructor is listed as staff automatically", staffRow?.userId === instructor.id && staffRow?.role === "instructor");
+  await expectReject(
+    "the primary instructor can't be removed from the staff",
+    (tx) => tx.delete(schema.courseStaff).where(eq(schema.courseStaff.courseId, courseA.id)),
+    /primary instructor/i,
+  );
+  await expectReject(
+    "a student account can't be course staff",
+    (tx) => tx.insert(schema.courseStaff).values({ courseId: courseA.id, userId: student.id, role: "teaching_assistant" }),
+    /different kind of account/i,
+  );
+  const [dept] = await db.insert(schema.departments).values({ name: `Dept ${tag}` }).returning();
+  const [prog] = await db.insert(schema.programmes).values({ departmentId: dept.id, name: "Prog", semesters: 8 }).returning();
+  const [sess] = await db.insert(schema.academicSessions).values({ name: `S ${tag}`, startsOn: "2026-07-01", endsOn: "2027-06-30" }).returning();
+  const [term1] = await db.insert(schema.terms).values({ sessionId: sess.id, name: "Odd", startsOn: "2026-07-15", endsOn: "2026-12-20" }).returning();
+  const [bat] = await db.insert(schema.batches).values({ programmeId: prog.id, intakeYear: 2024, name: "B 2024" }).returning();
+  const [secX, secY] = await db.insert(schema.classSections).values([{ batchId: bat.id, name: "A" }, { batchId: bat.id, name: "B" }]).returning();
+  await expectReject(
+    "a term must end after it starts",
+    (tx) => tx.insert(schema.terms).values({ sessionId: sess.id, name: "Bad", startsOn: "2026-12-20", endsOn: "2026-07-15" }),
+    /check|dates/i,
+  );
+  await expectReject(
+    "an instructor account can't be placed in a class section",
+    (tx) => tx.insert(schema.studentSections).values({ studentId: instructor.id, termId: term1.id, sectionId: secX.id }),
+    /different kind of account/i,
+  );
+  await db.insert(schema.studentSections).values({ studentId: student.id, termId: term1.id, sectionId: secX.id });
+  await expectReject(
+    "a student has one section per term",
+    (tx) => tx.insert(schema.studentSections).values({ studentId: student.id, termId: term1.id, sectionId: secY.id }),
+    /duplicate|unique/i,
+  );
+  await expectReject(
+    "structure in use can't be deleted (sections have students)",
+    (tx) => tx.delete(schema.classSections).where(eq(schema.classSections.id, secX.id)),
+    /foreign key|violates/i,
+  );
+
   // ---- history ---------------------------------------------------------------------
   const [ev] = await db.insert(schema.auditLog).values({ userId: student.id, action: "login" }).returning();
   await expectReject("audit log rows can't be edited", (tx) => tx.update(schema.auditLog).set({ action: "x" }).where(eq(schema.auditLog.id, ev.id)), /append-only/i);

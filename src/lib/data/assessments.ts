@@ -9,6 +9,7 @@ import { db, schema } from "@/db";
 import type { CurrentUser } from "@/lib/auth/dal";
 import { courseForInstructor, courseForStudent } from "@/lib/access";
 import { finalizeExpiredAttempts, finalizeIfExpired, GRACE_MS } from "@/lib/quiz-engine";
+import { staffOf } from "./sql";
 
 const { users, questions, attempts, answers, assignments, submissions, files, enrollments } = schema;
 
@@ -69,7 +70,7 @@ export async function getStudentQuiz(user: CurrentUser, quizId: string) {
 export async function getQuizAnalytics(user: CurrentUser, quizId: string) {
   const quiz = await db.query.quizzes.findFirst({ where: (q, { eq }) => eq(q.id, quizId) });
   if (!quiz) notFound();
-  const course = await courseForInstructor(user, quiz.courseId);
+  const course = await courseForInstructor(user, quiz.courseId, "grade.view");
   await finalizeExpiredAttempts({ quizId: quiz.id });
 
   const questionStats = await db
@@ -132,7 +133,7 @@ export async function getAssignmentForStudent(user: CurrentUser, assignmentId: s
 export async function getAssignmentForInstructor(user: CurrentUser, assignmentId: string) {
   const assignment = await db.query.assignments.findFirst({ where: (a, { eq }) => eq(a.id, assignmentId) });
   if (!assignment) notFound();
-  const course = await courseForInstructor(user, assignment.courseId);
+  const course = await courseForInstructor(user, assignment.courseId, "grade.edit");
   const rows = await db
     .select({
       studentId: users.id,
@@ -171,7 +172,7 @@ export function gradingQueue(instructorId: string, limit = 8) {
     .innerJoin(assignments, eq(assignments.id, submissions.assignmentId))
     .innerJoin(schema.courses, eq(schema.courses.id, assignments.courseId))
     .innerJoin(users, eq(users.id, submissions.studentId))
-    .where(and(eq(schema.courses.instructorId, instructorId), isNull(submissions.grade)))
+    .where(and(staffOf(instructorId), isNull(submissions.grade)))
     .orderBy(asc(submissions.submittedAt))
     .limit(limit);
 }

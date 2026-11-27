@@ -9,7 +9,7 @@ export async function GET(_: Request, ctx: RouteContext<"/instructor/courses/[co
   const user = await getActiveUser();
   if (!user || user.role !== "instructor") return new Response("Unauthorized", { status: 401 });
   const { courseId } = routeIds(await ctx.params);
-  const course = await courseForInstructor(user, courseId);
+  const course = await courseForInstructor(user, courseId, "grade.view");
   const book = await gradebook(course.id);
   const rows: unknown[][] = [
     ["Student ID", "Name", "Email", ...book.items.map((i) => `${i.title} (/${i.possible})`), "Points", "Possible", "Percent", "Grade"],

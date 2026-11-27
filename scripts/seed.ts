@@ -7,6 +7,7 @@
  *   Instructor  meera.iyer@eduwave.edu  (CS201, CS204)
  *               rahul.verma@eduwave.edu (MA202)
  *               sara.thomas@eduwave.edu (HS101)
+ *   TA          karan.mehra@eduwave.edu (teaching assistant on CS201)
  *   Student     24CS1001 … 24CS1012   (or their emails)
  *
  * Sample passwords are deliberately simple; real accounts must pass the password policy.
@@ -55,8 +56,10 @@ async function main() {
         { role: "instructor" as const, name: "Dr. Meera Iyer", email: "meera.iyer@eduwave.edu", passwordHash: hash, department: "Computer Science & Engineering", program: "Associate Professor" },
         { role: "instructor" as const, name: "Dr. Rahul Verma", email: "rahul.verma@eduwave.edu", passwordHash: hash, department: "Mathematics", program: "Assistant Professor" },
         { role: "instructor" as const, name: "Prof. Sara Thomas", email: "sara.thomas@eduwave.edu", passwordHash: hash, department: "Humanities & Social Sciences", program: "Professor" },
+        { role: "instructor" as const, name: "Karan Mehra", email: "karan.mehra@eduwave.edu", passwordHash: hash, department: "Computer Science & Engineering", program: "Teaching assistant" },
       ])
       .returning();
+    const karan = (await tx.query.users.findFirst({ where: (x, { eq }) => eq(x.email, "karan.mehra@eduwave.edu") }))!;
     const students = await tx
       .insert(u)
       .values(
@@ -73,16 +76,39 @@ async function main() {
       )
       .returning();
 
-    const term = "Autumn 2026";
+    // Academic structure (sample data, not Graphic Era's official structure).
+    const [cse, maths, hss] = await tx
+      .insert(schema.departments)
+      .values([{ name: "Computer Science & Engineering" }, { name: "Mathematics" }, { name: "Humanities & Social Sciences" }])
+      .returning();
+    const [btech] = await tx.insert(schema.programmes).values({ departmentId: cse.id, name: "B.Tech Computer Science and Engineering", semesters: 8 }).returning();
+    const [session] = await tx.insert(schema.academicSessions).values({ name: "2026–27", startsOn: "2026-07-01", endsOn: "2027-06-30" }).returning();
+    const [oddSem] = await tx.insert(schema.terms).values({ sessionId: session.id, name: "Odd semester", startsOn: "2026-07-15", endsOn: "2026-12-20" }).returning();
+    await tx.insert(schema.terms).values({ sessionId: session.id, name: "Even semester", startsOn: "2027-01-05", endsOn: "2027-05-31" });
+    const [batch] = await tx.insert(schema.batches).values({ programmeId: btech.id, intakeYear: 2024, name: "B.Tech CSE 2024" }).returning();
+    const [secA, secB] = await tx.insert(schema.classSections).values([{ batchId: batch.id, name: "A" }, { batchId: batch.id, name: "B" }]).returning();
+    await tx.insert(schema.studentSections).values(students.map((s, i) => ({ studentId: s.id, termId: oddSem.id, sectionId: i < 6 ? secA.id : secB.id })));
+
+    const term = "2026–27 · Odd semester";
+    const linked = { termId: oddSem.id };
     const [ds, dbms, prob, comm] = await tx
       .insert(schema.courses)
       .values([
-        { code: "CS201", title: "Data Structures and Algorithms", department: "Computer Science & Engineering", term, credits: 4, color: "indigo", instructorId: meera.id, enrollmentKey: "dsa-autumn26", description: "Arrays, linked lists, stacks, queues, trees, heaps, hashing and graphs, with **asymptotic analysis** and hands-on C++ labs." },
-        { code: "CS204", title: "Database Management Systems", department: "Computer Science & Engineering", term, credits: 4, color: "violet", instructorId: meera.id, enrollmentKey: "dbms-autumn26", description: "Relational model, SQL, normalisation, transactions and indexing. Labs use PostgreSQL." },
-        { code: "MA202", title: "Probability and Statistics", department: "Mathematics", term, credits: 3, color: "teal", instructorId: rahul.id, enrollmentKey: null, description: "Probability spaces, random variables, common distributions, estimation and hypothesis testing." },
-        { code: "HS101", title: "Technical Communication", department: "Humanities & Social Sciences", term, credits: 2, color: "amber", instructorId: sara.id, enrollmentKey: "comm2026", description: "Writing reports, documentation and presentations for technical audiences." },
+        { ...linked, departmentId: cse.id, code: "CS201", title: "Data Structures and Algorithms", department: "Computer Science & Engineering", term, credits: 4, color: "indigo", instructorId: meera.id, enrollmentKey: "dsa-autumn26", description: "Arrays, linked lists, stacks, queues, trees, heaps, hashing and graphs, with **asymptotic analysis** and hands-on C++ labs." },
+        { ...linked, departmentId: cse.id, code: "CS204", title: "Database Management Systems", department: "Computer Science & Engineering", term, credits: 4, color: "violet", instructorId: meera.id, enrollmentKey: "dbms-autumn26", description: "Relational model, SQL, normalisation, transactions and indexing. Labs use PostgreSQL." },
+        { ...linked, departmentId: maths.id, code: "MA202", title: "Probability and Statistics", department: "Mathematics", term, credits: 3, color: "teal", instructorId: rahul.id, enrollmentKey: null, description: "Probability spaces, random variables, common distributions, estimation and hypothesis testing." },
+        { ...linked, departmentId: hss.id, code: "HS101", title: "Technical Communication", department: "Humanities & Social Sciences", term, credits: 2, color: "amber", instructorId: sara.id, enrollmentKey: "comm2026", description: "Writing reports, documentation and presentations for technical audiences." },
       ])
       .returning();
+
+    // Sections taking each course; a teaching assistant on CS201.
+    await tx.insert(schema.courseSections).values([
+      { courseId: ds.id, sectionId: secA.id },
+      { courseId: ds.id, sectionId: secB.id },
+      { courseId: prob.id, sectionId: secA.id },
+      { courseId: prob.id, sectionId: secB.id },
+    ]);
+    await tx.insert(schema.courseStaff).values({ courseId: ds.id, userId: karan.id, role: "teaching_assistant" });
 
     // Enrolments: everyone in CS201/MA202/HS101, the first 9 in CS204.
     await tx.insert(schema.enrollments).values([
@@ -217,7 +243,7 @@ async function main() {
     );
   });
 
-  console.log("Seeded: 1 admin, 3 instructors, 12 students, 4 courses with sections, materials, assignments, quizzes, live classes and discussions.");
+  console.log("Seeded: 1 admin, 3 instructors + 1 teaching assistant, 12 students in sections A/B, 4 courses with sections, materials, assignments, quizzes, live classes and discussions.");
 }
 
 main()

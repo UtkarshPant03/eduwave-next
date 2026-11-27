@@ -56,7 +56,7 @@ jobs:
       - run: npm run test:db
 
   browser:
-    name: Browser suites (e2e, stability, security, a11y)
+    name: Browser suites (e2e, stability, security, institution, a11y)
     runs-on: ubuntu-latest
     env:
       EDUWAVE_ENV: local
@@ -79,6 +79,7 @@ jobs:
       - run: npm run test:e2e
       - run: npm run test:stability
       - run: npm run test:security
+      - run: npm run test:institution
       - run: npm run test:a11y
       - name: Server log (on failure)
         if: failure()

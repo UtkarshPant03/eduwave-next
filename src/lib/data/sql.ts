@@ -13,3 +13,7 @@ export const outer = (table: string, column: string) => sql.raw(`"${table}"."${c
 export const countOf = (query: ReturnType<typeof sql>) => sql<number>`(${query})`.mapWith(Number);
 
 export const nullableNumber = (v: unknown) => (v == null ? null : Number(v));
+
+/** WHERE condition: the outer `courses` row has this user on its course staff. */
+export const staffOf = (userId: string) =>
+  sql`exists (select 1 from course_staff cs where cs.course_id = ${outer("courses", "id")} and cs.user_id = ${userId})`;

@@ -10,7 +10,7 @@ export const metadata: Metadata = { title: "Audit log" };
 const ACTIONS = [
   "login", "login_failed", "login_locked", "logout", "password_changed", "password_reset", "sessions_revoked",
   "user_created", "user_deactivated", "user_reactivated", "course_created", "course_published", "course_hidden",
-  "enrolment_added", "enrolment_removed", "activity_deleted", "grade_changed",
+  "enrolment_added", "enrolment_removed", "activity_deleted", "grade_changed", "structure_changed", "course_staff_changed",
 ];
 const DANGER = new Set(["login_failed", "login_locked", "user_deactivated", "activity_deleted"]);
 

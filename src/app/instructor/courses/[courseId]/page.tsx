@@ -9,11 +9,12 @@ import { CourseHero } from "@/components/course/course-hero";
 import { Discussions } from "@/components/course/discussions";
 import { GradebookTable } from "@/components/course/gradebook-table";
 import { CourseOutline } from "@/components/course/outline";
-import { Avatar, buttonClass, Card, Empty, Field, Input, Table, Textarea } from "@/components/ui";
-import { courseForInstructor } from "@/lib/access";
+import { Badge, Avatar, buttonClass, Card, Empty, Field, Input, Table, Textarea } from "@/components/ui";
+import { courseForInstructor, courseStaffRole } from "@/lib/access";
+import { STAFF_ROLE_LABEL, staffCan } from "@/lib/auth/capabilities";
 import { requireInstructor } from "@/lib/auth/dal";
 import { COURSE_COLORS, coverFor } from "@/lib/course-colors";
-import { courseOutline, courseParticipants, listSections } from "@/lib/data/courses";
+import { courseOutline, courseParticipants, listSections, courseStaffList } from "@/lib/data/courses";
 import { gradebook } from "@/lib/data/gradebook";
 import { db } from "@/db";
 import { formatDate, formatRelative, requestTime } from "@/lib/format";
@@ -24,14 +25,17 @@ import { routeIds } from "@/lib/route-ids";
 export default async function InstructorCoursePage({ params }: PageProps<"/instructor/courses/[courseId]">) {
   const { courseId } = routeIds(await params);
   const user = await requireInstructor();
-  const course = await courseForInstructor(user, courseId);
+  const course = await courseForInstructor(user, courseId, "course.view");
+  // Teaching assistants can view, grade and moderate, but not change the course.
+  const canManage = user.role === "admin" || staffCan(await courseStaffRole(user.id, course.id), "course.manage");
   const now = requestTime();
-  const [outline, sections, participants, book, live] = await Promise.all([
+  const [outline, sections, participants, book, live, staff] = await Promise.all([
     courseOutline(course.id),
     listSections(course.id),
     courseParticipants(course.id),
     gradebook(course.id),
     db.query.liveSessions.findMany({ where: (l, { eq }) => eq(l.courseId, course.id) }),
+    courseStaffList(course.id),
   ]);
   const liveLinks = Object.fromEntries(live.map((l) => [l.id, jitsiLink(l, user.name, now)]).filter(([, v]) => v)) as Record<string, string>;
   const label = (Icon: typeof Users, text: string, n?: number) => (
@@ -47,6 +51,7 @@ export default async function InstructorCoursePage({ params }: PageProps<"/instr
         students={participants.length}
         breadcrumbs={[{ label: "My courses", href: "/instructor/courses" }, { label: course.code }]}
         actions={
+          canManage && (
           <>
             <Link href={`/instructor/courses/${course.id}/assignments/new`} className={buttonClass()}>
               <NotebookPen className="size-4" /> New assignment
@@ -55,6 +60,7 @@ export default async function InstructorCoursePage({ params }: PageProps<"/instr
               <ClipboardList className="size-4" /> New quiz
             </Link>
           </>
+          )
         }
       />
 
@@ -65,7 +71,8 @@ export default async function InstructorCoursePage({ params }: PageProps<"/instr
             label: label(LayoutList, "Content"),
             content: (
               <div className="grid gap-6 xl:grid-cols-[1fr_24rem] [&>*]:min-w-0">
-                <CourseOutline courseId={course.id} sections={outline} mode="instructor" now={now} liveLinks={liveLinks} />
+                <CourseOutline courseId={course.id} sections={outline} mode="instructor" canManage={canManage} now={now} liveLinks={liveLinks} />
+                {canManage && (
                 <div className="space-y-6">
                   <Card title="Add section" icon={<FolderPlus />}>
                     <ActionForm action={addSection} submitLabel="Add section">
@@ -81,6 +88,7 @@ export default async function InstructorCoursePage({ params }: PageProps<"/instr
                     <LiveForm courseId={course.id} sections={sections} />
                   </Card>
                 </div>
+                )}
               </div>
             ),
           },
@@ -108,13 +116,28 @@ export default async function InstructorCoursePage({ params }: PageProps<"/instr
                           <td className="px-2 py-2 text-muted">{p.program ?? "–"}</td>
                           <td className="px-2 py-2 text-muted">{formatDate(p.enrolledAt)}</td>
                           <td className="px-2 py-2 text-muted">{p.lastLoginAt ? formatRelative(p.lastLoginAt, now) : "Never"}</td>
-                          <td className="px-2 py-2 text-right"><UnenrolButton courseId={course.id} userId={p.id} name={p.name} /></td>
+                          <td className="px-2 py-2 text-right">{canManage && <UnenrolButton courseId={course.id} userId={p.id} name={p.name} />}</td>
                         </tr>
                       ))}
                     </Table>
                   )}
                 </Card>
                 <div className="space-y-6">
+                  <Card title="Course staff">
+                    <ul className="space-y-2 text-sm">
+                      {staff.map((m) => (
+                        <li key={m.userId} className="flex items-center justify-between gap-2">
+                          <span className="min-w-0">
+                            <span className="block truncate font-medium">{m.name}</span>
+                            <span className="block truncate text-xs text-muted">{m.email}</span>
+                          </span>
+                          <Badge>{m.primary ? "Primary instructor" : STAFF_ROLE_LABEL[m.role]}</Badge>
+                        </li>
+                      ))}
+                    </ul>
+                  </Card>
+                  {canManage && (
+                  <>
                   <Card title="Enrol students" description="Paste student IDs or emails, one per line.">
                     <EnrolPanel courseId={course.id} />
                   </Card>
@@ -127,6 +150,8 @@ export default async function InstructorCoursePage({ params }: PageProps<"/instr
                       )}
                     </p>
                   </Card>
+                  </>
+                  )}
                 </div>
               </div>
             ),
@@ -145,7 +170,7 @@ export default async function InstructorCoursePage({ params }: PageProps<"/instr
             ),
           },
           { id: "discussions", label: label(MessagesSquare, "Discussions"), content: <Discussions courseId={course.id} role="instructor" now={now} /> },
-          {
+          ...(canManage ? [{
             id: "settings",
             label: label(Settings2, "Settings"),
             content: (
@@ -181,7 +206,7 @@ export default async function InstructorCoursePage({ params }: PageProps<"/instr
                 </ActionForm>
               </Card>
             ),
-          },
+          }] : []),
         ]}
       />
     </>

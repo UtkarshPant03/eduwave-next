@@ -18,6 +18,42 @@ eduWave uses PostgreSQL through Drizzle ORM. The schema is in `src/db/schema.ts`
 npm run db:migrate        # applies pending migrations; running it again is a no-op
 ```
 
+### Plan for `0003_institution` (Phase 2, written before the change)
+
+**Change.** Additive only:
+- **New tables:** departments, programmes, academic sessions, terms, batches, class sections, `student_sections` (one class section per student per term), `course_sections`, `course_staff` (coordinator, instructor or teaching assistant) and `role_assignments` (department admin, HOD or dean).
+- **Courses:** two new nullable columns, `courses.department_id` and `courses.term_id`.
+- **Triggers:**
+  - account-type checks: course staff must be instructors, section members must be students, and scoped roles go only to staff or admins;
+  - the primary instructor (`courses.instructor_id`) is always on the course staff and can't be removed from it.
+
+**Back-fill.**
+1. A department is created for each distinct `courses.department` text, and courses are linked to it.
+2. Each course's primary instructor is copied into `course_staff`.
+
+Terms are **not** guessed from the free-text `courses.term`: an admin links them. No existing column is changed or dropped.
+
+**Verified on 2026-11-27.**
+- **PostgreSQL 18 upgrade** from 0002, using a real seeded database: 8 courses became 4 departments, all 8 courses were linked, and every course got its primary instructor as staff.
+- **Fresh installs:** PGlite and PostgreSQL 18, with the integrity suite passing 29/29.
+- **Re-running the migration** is a no-op.
+
+**Rollback.**
+```sql
+DROP TRIGGER courses_primary_instructor_staff ON courses;
+DROP TRIGGER course_staff_keep_primary ON course_staff;
+DROP TRIGGER student_sections_persona ON student_sections;
+DROP TRIGGER course_staff_persona ON course_staff;
+DROP TRIGGER role_assignments_persona ON role_assignments;
+DROP FUNCTION eduwave_require_persona(), eduwave_sync_primary_instructor(), eduwave_keep_primary_instructor();
+ALTER TABLE courses DROP COLUMN department_id, DROP COLUMN term_id;
+DROP TABLE role_assignments, course_staff, course_sections, student_sections, class_sections, batches, terms, academic_sessions, programmes, departments;
+DROP TYPE course_staff_role, scoped_role;
+-- then remove 0003 from drizzle.__drizzle_migrations and drizzle/meta/_journal.json
+```
+
+Rollback discards only the Phase 2 data (structure, staff assignments, placements). Courses, enrolments and all academic records are untouched.
+
 ### Plan for `0002_completions_integrity` (written before the change)
 
 **Problem.** `completions.item_id` points at either a resource or a live session, so it has no foreign key. Two consequences:

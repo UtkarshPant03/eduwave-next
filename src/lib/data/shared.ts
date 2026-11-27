@@ -46,9 +46,9 @@ export async function visibleCourseIds(userId: string) {
   return rows.map((r) => r.id);
 }
 
-/** Ids of the courses an instructor teaches (cheap: no per-course statistics). */
+/** Ids of the courses a user is on the staff of (cheap: no per-course statistics). */
 export async function taughtCourseIds(userId: string) {
-  const rows = await db.select({ id: schema.courses.id }).from(schema.courses).where(eq(schema.courses.instructorId, userId));
+  const rows = await db.select({ id: schema.courseStaff.courseId }).from(schema.courseStaff).where(eq(schema.courseStaff.userId, userId));
   return rows.map((r) => r.id);
 }
 
