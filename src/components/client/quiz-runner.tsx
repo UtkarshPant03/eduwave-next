@@ -82,7 +82,7 @@ export function QuizRunner({ quizId, questions, endsAtMs, serverNowMs, totalMs }
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_17rem]">
+    <div className="grid gap-6 lg:grid-cols-[1fr_17rem] [&>*]:min-w-0">
       <Card className="relative overflow-hidden">
         <div className="absolute inset-x-0 top-0 h-1 bg-surface-2" aria-hidden>
           <div className={`h-full transition-[width] duration-500 ${pct < 0.1 ? "bg-danger" : pct < 0.25 ? "bg-warning" : "bg-brand"}`} style={{ width: `${pct * 100}%` }} />

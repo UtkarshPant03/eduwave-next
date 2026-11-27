@@ -63,7 +63,7 @@ export default async function InstructorCoursePage({ params }: PageProps<"/instr
             id: "content",
             label: label(LayoutList, "Content"),
             content: (
-              <div className="grid gap-6 xl:grid-cols-[1fr_24rem]">
+              <div className="grid gap-6 xl:grid-cols-[1fr_24rem] [&>*]:min-w-0">
                 <CourseOutline courseId={course.id} sections={outline} mode="instructor" now={now} liveLinks={liveLinks} />
                 <div className="space-y-6">
                   <Card title="Add section" icon={<FolderPlus />}>
@@ -87,7 +87,7 @@ export default async function InstructorCoursePage({ params }: PageProps<"/instr
             id: "participants",
             label: label(Users, "Participants", participants.length),
             content: (
-              <div className="grid gap-6 xl:grid-cols-[1fr_22rem]">
+              <div className="grid gap-6 xl:grid-cols-[1fr_22rem] [&>*]:min-w-0">
                 <Card title="Enrolled students">
                   {participants.length === 0 ? (
                     <Empty icon={<Users />}>No students yet. Enrol them, or share the enrolment key.</Empty>

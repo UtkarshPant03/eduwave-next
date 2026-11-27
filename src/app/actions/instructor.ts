@@ -206,17 +206,39 @@ const DELETABLE = {
   live: schema.liveSessions,
 } as const;
 
-/** Deletes an activity (and, for file resources, the stored file). */
-export async function deleteActivity(courseId: string, kind: keyof typeof DELETABLE, id: string) {
+/**
+ * Deletes an activity (and, for file resources, the stored file).
+ *
+ * Assignments and quizzes that students have already worked on are protected: deleting
+ * them would silently destroy submissions and grades (the FKs cascade). The check is
+ * here on the server, not just in the confirm() dialog, so no client can bypass it.
+ */
+export async function deleteActivity(courseId: string, kind: keyof typeof DELETABLE, id: string): Promise<{ error?: string }> {
   const { course } = await ownCourse(courseId);
   const table = DELETABLE[kind];
-  if (!table) return;
+  if (!table) return { error: "Unknown activity type." };
+  const activityId = uuid.parse(id);
+
+  const studentWork =
+    kind === "assignment"
+      ? await db.$count(schema.submissions, eq(schema.submissions.assignmentId, activityId))
+      : kind === "quiz"
+        ? await db.$count(schema.attempts, eq(schema.attempts.quizId, activityId))
+        : 0;
+  if (studentWork > 0) {
+    const what = kind === "assignment" ? "submitted work" : "attempted it";
+    return {
+      error: `${studentWork} student${studentWork === 1 ? " has" : "s have"} ${what}, so it can't be deleted: that would erase their grades. You can still edit it, for example to change its deadline.`,
+    };
+  }
+
   const [row] = await db
     .delete(table)
-    .where(and(eq(table.id, uuid.parse(id)), eq(table.courseId, course.id)))
+    .where(and(eq(table.id, activityId), eq(table.courseId, course.id)))
     .returning();
   if (kind === "resource" && row && "fileId" in row && row.fileId) await db.delete(schema.files).where(eq(schema.files.id, row.fileId));
   refresh();
+  return {};
 }
 
 /* ------------------------------- assignments ------------------------------- */
@@ -243,6 +265,47 @@ export async function createAssignment(input: z.input<typeof assignmentInput>): 
     .returning({ id: schema.assignments.id });
   await notifyCourse(course.id, { title: `${course.code}: new assignment`, body: `${a.title} · due ${formatDateTime(a.dueAt)}`, link: `/student/assignments/${row.id}` });
   redirect(`/instructor/assignments/${row.id}`);
+}
+
+const assignmentUpdate = assignmentInput.omit({ courseId: true }).extend({ id: uuid });
+
+/**
+ * Edits an assignment, e.g. to extend the deadline or fix a typo. Grades stay valid:
+ * the maximum can't drop below a grade already awarded. Students hear about date changes.
+ */
+export async function updateAssignment(input: z.input<typeof assignmentUpdate>): Promise<FormState> {
+  const parsed = assignmentUpdate.safeParse(input);
+  if (!parsed.success) return { error: firstIssue(parsed.error) };
+  const user = await requireInstructor();
+  const a = parsed.data;
+  const existing = await db.query.assignments.findFirst({ where: (x, { eq }) => eq(x.id, a.id) });
+  if (!existing) return { error: "Assignment not found." };
+  const course = await courseForInstructor(user, existing.courseId);
+
+  const [{ top }] = await db
+    .select({ top: sql<string | null>`max(${schema.submissions.grade})` })
+    .from(schema.submissions)
+    .where(eq(schema.submissions.assignmentId, existing.id));
+  if (top != null && a.maxPoints < Number(top))
+    return { error: `A student already has ${top} points, so the maximum can't be lower than that.` };
+
+  await db
+    .update(schema.assignments)
+    .set({
+      title: a.title,
+      instructions: a.instructions,
+      sectionId: await checkSection(course.id, a.sectionId),
+      dueAt: a.dueAt,
+      maxPoints: a.maxPoints,
+      lateDays: a.lateDays,
+    })
+    .where(eq(schema.assignments.id, existing.id));
+
+  if (existing.dueAt.getTime() !== a.dueAt.getTime() || existing.lateDays !== a.lateDays) {
+    const late = a.lateDays ? ` (late submissions accepted for ${a.lateDays} day${a.lateDays === 1 ? "" : "s"})` : "";
+    await notifyCourse(course.id, { title: `${course.code}: deadline changed`, body: `${a.title} · now due ${formatDateTime(a.dueAt)}${late}`, link: `/student/assignments/${existing.id}` });
+  }
+  redirect(`/instructor/assignments/${existing.id}`);
 }
 
 const gradeInput = z.object({
@@ -333,6 +396,53 @@ export async function createQuiz(draft: QuizDraft): Promise<FormState> {
     link: `/student/quizzes/${quizId}`,
   });
   redirect(`/instructor/quizzes/${quizId}`);
+}
+
+const quizUpdate = quizInput.omit({ courseId: true }).extend({ id: uuid, questions: quizInput.shape.questions.optional() });
+
+/**
+ * Edits a quiz. What may change depends on what students have already done:
+ * - Before anyone starts: everything, including the questions and answer key.
+ * - After someone starts: title, description, section, shuffle and deadline only.
+ *   Changing questions or the time limit mid-way would make attempts unfair.
+ * - After the deadline: the deadline is fixed, because the answer key is already visible.
+ */
+export async function updateQuiz(draft: z.input<typeof quizUpdate>): Promise<FormState> {
+  const parsed = quizUpdate.safeParse(draft);
+  if (!parsed.success) return { error: firstIssue(parsed.error) };
+  const user = await requireInstructor();
+  const q = parsed.data;
+  const existing = await db.query.quizzes.findFirst({ where: (x, { eq }) => eq(x.id, q.id) });
+  if (!existing) return { error: "Quiz not found." };
+  const course = await courseForInstructor(user, existing.courseId);
+
+  const deadlineChanged = existing.deadline.getTime() !== q.deadline.getTime();
+  if (deadlineChanged && existing.deadline.getTime() <= Date.now())
+    return { error: "The deadline has passed and students can already see the answers, so it can't be changed." };
+  if (deadlineChanged && q.deadline.getTime() <= Date.now()) return { error: "The new deadline must be in the future." };
+
+  const sectionId = await checkSection(course.id, q.sectionId);
+  const result = await db.transaction(async (tx) => {
+    // Checked inside the transaction, right before any question is replaced.
+    const started = await tx.$count(schema.attempts, eq(schema.attempts.quizId, existing.id));
+    if (started > 0 && q.questions) return { error: `Questions are locked because ${started} student${started === 1 ? " has" : "s have"} started this quiz.` };
+    if (started > 0 && q.timeLimitMinutes !== existing.timeLimitMinutes) return { error: "The time limit is locked once students have started." };
+
+    await tx
+      .update(schema.quizzes)
+      .set({ title: q.title, description: q.description || null, sectionId, timeLimitMinutes: q.timeLimitMinutes, deadline: q.deadline, shuffle: q.shuffle })
+      .where(eq(schema.quizzes.id, existing.id));
+    if (q.questions) {
+      await tx.delete(schema.questions).where(eq(schema.questions.quizId, existing.id));
+      await tx.insert(schema.questions).values(q.questions.map((question, position) => ({ quizId: existing.id, position, ...question })));
+    }
+    return null;
+  });
+  if (result) return result;
+
+  if (deadlineChanged)
+    await notifyCourse(course.id, { title: `${course.code}: quiz deadline changed`, body: `${q.title} · now due ${formatDateTime(q.deadline)}`, link: `/student/quizzes/${existing.id}` });
+  redirect(`/instructor/quizzes/${existing.id}`);
 }
 
 /** Drafts questions with the local AI model. The instructor reviews them before publishing. */

@@ -54,7 +54,7 @@ export async function CalendarPage({ role, searchParams }: { role: Exclude<Role,
           </div>
         }
       />
-      <div className="grid gap-6 xl:grid-cols-[1fr_18rem]">
+      <div className="grid gap-6 xl:grid-cols-[1fr_18rem] [&>*]:min-w-0">
         <Card title={<span className="flex items-center gap-2"><CalendarDays className="size-4 text-accent" /> {label}</span>}>
           <div className="grid grid-cols-7 gap-px overflow-hidden rounded-xl border border-border bg-border text-xs">
             {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (

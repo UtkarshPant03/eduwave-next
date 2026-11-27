@@ -44,3 +44,14 @@ function inline(s: string): ReactNode {
     return <Fragment key={k}>{part}</Fragment>;
   });
 }
+
+/** Markdown → plain text, for one-line previews (lists, cards, notifications). */
+export function plainText(md: string) {
+  return md
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[*_`#>]+/g, "")
+    .replace(/^\s*([-*]|\d+\.)\s+/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}

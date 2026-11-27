@@ -17,7 +17,7 @@ export default async function AdminCoursesPage() {
   return (
     <>
       <PageHeader eyebrow="Manage" title="Courses" subtitle={`${courses.length} course${courses.length === 1 ? "" : "s"}`} />
-      <div className="grid gap-6 xl:grid-cols-[1fr_24rem]">
+      <div className="grid gap-6 xl:grid-cols-[1fr_24rem] [&>*]:min-w-0">
         <Card>
           {courses.length === 0 ? (
             <Empty icon={<BookOpen />}>No courses yet. Create the first one.</Empty>

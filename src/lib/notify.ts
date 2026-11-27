@@ -3,7 +3,7 @@
  * when SMTP is configured (any SMTP account works, e.g. a Gmail App Password).
  *
  * Emails are sent with after(), i.e. once the response has been sent, so a slow or
- * failing mail server never delays or breaks the teacher's action.
+ * failing mail server never delays or breaks the action that triggered it.
  */
 import "server-only";
 import { after } from "next/server";

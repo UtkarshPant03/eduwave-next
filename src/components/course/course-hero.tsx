@@ -25,8 +25,8 @@ export function CourseHero({
         <div className="relative flex flex-wrap items-end gap-6 p-6 pt-14 text-white sm:p-8 sm:pt-16">
           <div className="min-w-0 flex-1">
             <p className="font-mono text-xs font-semibold tracking-widest text-white/80">{course.code}</p>
-            <h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">{course.title}</h1>
-            <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1.5 text-sm text-white/85">
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight [overflow-wrap:anywhere] sm:text-3xl">{course.title}</h1>
+            <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1.5 text-sm text-white/85 [&_svg]:shrink-0">
               <span className="flex items-center gap-1.5"><CalendarRange className="size-4" /> {course.term}</span>
               <span className="flex items-center gap-1.5"><Layers className="size-4" /> {course.credits} credits · {course.department}</span>
               {instructor && <span className="flex items-center gap-1.5"><GraduationCap className="size-4" /> {instructor}</span>}
@@ -34,7 +34,7 @@ export function CourseHero({
             </div>
           </div>
           {progress != null && (
-            <div className="flex items-center gap-3 rounded-2xl bg-white/15 px-4 py-3 backdrop-blur [&_circle:first-of-type]:stroke-white/25">
+            <div className="flex items-center gap-3 rounded-2xl bg-white/15 px-4 py-3 backdrop-blur [&_circle:first-of-type]:stroke-white/25 [&_circle:last-of-type]:stroke-white">
               <ProgressRing value={progress} label="Course progress" />
               <span className="text-sm">Your<br />progress</span>
             </div>

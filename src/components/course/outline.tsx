@@ -52,7 +52,7 @@ export function CourseOutline({
     return <Empty icon={<FolderOpen />}>{mode === "instructor" ? "Add your first section to start building the course." : "Your instructor hasn't published any content yet."}</Empty>;
   }
   return (
-    <div className="stagger space-y-4">
+    <div className="stagger min-w-0 space-y-4">
       {sections.map((s, idx) => {
         const done = s.items.filter((i) => i.done).length;
         return (

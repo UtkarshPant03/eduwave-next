@@ -35,7 +35,7 @@ export default async function InstructorHome() {
         <StatTile label="Next 14 days" value={events.length} hint="deadlines & live classes" icon={<CalendarClock />} tone="neutral" />
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1fr_22rem]">
+      <div className="grid gap-6 xl:grid-cols-[1fr_22rem] [&>*]:min-w-0">
         <div className="space-y-6">
           <section>
             <div className="mb-3 flex items-center justify-between">

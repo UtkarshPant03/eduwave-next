@@ -23,7 +23,7 @@ export default async function StudentAssignmentPage({ params }: PageProps<"/stud
         eyebrow="Assignment"
         title={assignment.title}
       />
-      <div className="grid gap-6 xl:grid-cols-[1fr_22rem]">
+      <div className="grid gap-6 xl:grid-cols-[1fr_22rem] [&>*]:min-w-0">
         <div className="space-y-6">
           <Card title="Instructions" icon={<FileText />}>
             <Markdown text={assignment.instructions} className="prose-chat text-sm" />

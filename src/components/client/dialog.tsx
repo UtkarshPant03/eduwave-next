@@ -30,6 +30,12 @@ export function Dialog({
     if (!d) return;
     if (open && !d.open) d.showModal();
     if (!open && d.open) d.close();
+    // A modal <dialog> makes everything else inert. If this component is hidden (e.g. the
+    // route moved into React <Activity> after navigation) or unmounted while open, close it,
+    // otherwise the next page would be unclickable.
+    return () => {
+      if (d.open) d.close();
+    };
   }, [open, mounted]);
 
   if (!mounted) return null;

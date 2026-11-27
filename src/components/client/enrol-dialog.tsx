@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { enrolWithKey } from "@/app/actions/student";
 import { ActionForm } from "@/components/action-form";
@@ -11,15 +11,13 @@ import { Dialog } from "./dialog";
 export function EnrolDialog({ courseId, label, trigger }: { courseId: string; label: string; trigger: ReactNode }) {
   const [open, setOpen] = useState(false);
   const router = useRouter();
-  const [enrolled, setEnrolled] = useState(false);
-  useEffect(() => {
-    if (enrolled) router.push(`/student/courses/${courseId}`);
-  }, [enrolled, courseId, router]);
-
-  // Wrap the action to navigate into the course after a successful enrolment.
+  // Wrap the action: on success, close the modal first, then open the course.
   async function action(state: FormState, fd: FormData) {
     const res = await enrolWithKey(state, fd);
-    if (res?.success) setEnrolled(true);
+    if (res?.success) {
+      setOpen(false);
+      router.push(`/student/courses/${courseId}`);
+    }
     return res;
   }
 

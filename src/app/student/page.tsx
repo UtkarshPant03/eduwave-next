@@ -12,6 +12,7 @@ import { recentAnnouncements } from "@/lib/data/community";
 import { listStudentCourses } from "@/lib/data/courses";
 import { formatDateTime, formatRelative, requestTime } from "@/lib/format";
 import { greeting } from "@/lib/greeting";
+import { plainText } from "@/components/markdown";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
@@ -42,7 +43,7 @@ export default async function StudentHome() {
         <StatTile label="Next live class" value={nextLive ? formatRelative(nextLive.at, now) : "–"} hint={nextLive?.title} icon={<Video />} tone="neutral" />
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1fr_22rem]">
+      <div className="grid gap-6 xl:grid-cols-[1fr_22rem] [&>*]:min-w-0">
         <div className="space-y-6">
           <section>
             <div className="mb-3 flex items-center justify-between">
@@ -100,7 +101,7 @@ export default async function StudentHome() {
                         <span className="size-2 rounded-full" style={{ background: coverFor(a.color).from }} aria-hidden /> {a.courseCode} · {formatRelative(a.createdAt, now)}
                       </span>
                       <span className="mt-0.5 block font-medium group-hover:text-accent">{a.title}</span>
-                      <span className="line-clamp-2 text-muted">{a.body}</span>
+                      <span className="line-clamp-2 text-muted">{plainText(a.body)}</span>
                     </Link>
                   </li>
                 ))}

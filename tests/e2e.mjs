@@ -1,5 +1,6 @@
 /**
- * End-to-end test of the main flows in a real browser (Playwright, no test runner needed).
+ * End-to-end test of the LMS in a real browser (Playwright, no test runner needed).
+ * Covers the full course lifecycle across all three roles, plus security checks.
  *
  * Run against a FRESH seeded database and a running production server:
  *   rm -rf .pglite && npm run db:migrate && npm run db:seed
@@ -15,242 +16,313 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const BASE = process.env.BASE_URL ?? "http://localhost:3100";
+const PW = "eduwave2026"; // sample-data password (see scripts/seed.ts)
 const results = [];
 const check = (name, ok, detail = "") => {
   results.push({ name, ok });
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? "  — " + detail : ""}`);
 };
-const seen = (loc, timeout = 8000) => loc.first().waitFor({ timeout }).then(() => true, () => false);
+const seen = (loc, timeout = 10000) => loc.first().waitFor({ timeout }).then(() => true, () => false);
 const pad = (n) => String(n).padStart(2, "0");
 const localDT = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 
-// Test files (in a temp dir): a real minimal PDF and an HTML file disguised as a PDF.
 const dir = mkdtempSync(join(tmpdir(), "eduwave-e2e-"));
-const NOTES = join(dir, "notes.pdf");
-const EVIL = join(dir, "evil.pdf");
-writeFileSync(NOTES, "%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n");
-writeFileSync(EVIL, "<html><script>alert(1)</script></html>");
+const REPORT = join(dir, "report.pdf");
+writeFileSync(REPORT, "%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n");
 
 const browser = await chromium.launch({ channel: process.env.BROWSER_CHANNEL ?? "msedge", headless: true });
-const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-const page = await ctx.newPage();
 const run = Date.now().toString().slice(-5);
-const roll = `T${run}`;
+const SID = `25CS${run}`;
+const CODE = `CS${run.slice(-3)}`;
 let tempPassword = "";
-let quizId = "";
+let courseUrl = "";
+let assignmentId = "";
+let submissionFileHref = "";
 
-async function loginTeacher() {
+async function newPage() {
+  const ctx = await browser.newContext({ viewport: { width: 1366, height: 900 } });
+  return ctx.newPage();
+}
+async function signIn(page, identifier, password = PW) {
   await page.goto(`${BASE}/login`);
-  const card = page.locator("section", { hasText: "Teacher" }).last();
-  await card.getByLabel("Email").fill("teacher@example.com");
-  await card.getByLabel("Password").fill("teacher123");
-  await card.getByRole("button", { name: "Log in as teacher" }).click();
-  await page.waitForURL(`${BASE}/teacher`);
+  await page.getByLabel("Email or student ID").fill(identifier);
+  await page.getByLabel("Password", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Sign in" }).click();
 }
-async function loginStudent(r, pw) {
-  await page.goto(`${BASE}/login`);
-  const card = page.locator("section", { hasText: "Student" }).first();
-  await card.getByLabel("Roll number").fill(r);
-  await card.getByLabel("Password").fill(pw);
-  await card.getByRole("button", { name: "Log in as student" }).click();
-}
-async function logout() {
-  await page.locator("aside").getByRole("button", { name: "Log out" }).click();
-  await page.waitForURL(`${BASE}/login`);
-}
+const dialog = (page) => page.locator("dialog[open]");
 
+let page;
 try {
-  // ---------- Security headers ----------
-  const res = await page.request.get(`${BASE}/`);
-  const h = res.headers();
+  /* ------------------------------ public ------------------------------ */
+  page = await newPage();
+  const h = (await page.request.get(`${BASE}/`)).headers();
   check("security headers (CSP, X-Frame-Options, nosniff)", h["content-security-policy"]?.includes("frame-ancestors 'none'") && h["x-frame-options"] === "DENY" && h["x-content-type-options"] === "nosniff");
-  check("no X-Powered-By header", !h["x-powered-by"]);
+  await page.goto(`${BASE}/`);
+  check("landing page presents the LMS", await seen(page.getByRole("heading", { name: /university courses/i })));
+  const r = await page.request.get(`${BASE}/instructor/courses`, { maxRedirects: 0 });
+  check("signed-out visitors are redirected to login (with next=)", r.status() === 307 && r.headers().location.includes("/login?next=%2Finstructor%2Fcourses"));
 
-  // ---------- Teacher ----------
-  await loginTeacher();
-  check("teacher dashboard with stat tiles", await seen(page.getByText("Open quizzes").first()));
-  check("class card counts are correct (3 students · 2 quizzes)", await seen(page.getByText("3 students · 2 quizzes")));
-  await page.getByRole("link", { name: /Class 10-A/ }).first().click();
-  await page.waitForURL(/\/teacher\/classes\/[0-9a-f-]{36}/);
-  const classUrl = page.url().split("#")[0];
-  check("quiz table: seeded past quiz shows 3 / 3 submitted, 75% avg", (await seen(page.getByRole("cell", { name: "3 / 3" }))) && (await seen(page.getByRole("cell", { name: "75%" }))));
+  /* ------------------------------ admin ------------------------------ */
+  await signIn(page, "admin@eduwave.edu");
+  await page.waitForURL(`${BASE}/admin`);
+  check("admin signs in → overview", await seen(page.getByText("Students").first()));
 
-  // Students tab: add via dialog, get one-time temp password
-  await page.getByRole("tab", { name: /Students/ }).click();
-  await page.getByRole("button", { name: "Add student" }).first().click();
-  const dlg = page.locator("dialog[open]");
-  await dlg.getByLabel("Full name").fill("Test Student");
-  await dlg.getByLabel("Roll number").fill(roll);
-  await dlg.getByRole("button", { name: "Add student" }).click();
-  const okText = await dlg.getByText(/Temporary password:/).first().innerText({ timeout: 8000 });
-  tempPassword = okText.match(/Temporary password: (\S+)/)?.[1] ?? "";
-  check("add student returns one-time temp password", /^[a-z]+-[a-z]+-\d{4}$/.test(tempPassword), tempPassword);
+  await page.goto(`${BASE}/admin/users`);
+  await page.getByRole("button", { name: "New user" }).click();
+  await dialog(page).getByLabel("Full name").fill("Test Student");
+  await dialog(page).getByLabel("Email").fill(`test.${run}@student.eduwave.edu`);
+  await dialog(page).getByLabel("Student ID").fill(SID);
+  await dialog(page).getByRole("button", { name: "Create account" }).click();
+  const created = await dialog(page).getByText(/Temporary password:/).first().innerText({ timeout: 10000 });
+  tempPassword = created.match(/Temporary password: (\S+)/)?.[1] ?? "";
+  check("admin creates student with one-time temp password", /^[a-z]+-[a-z]+-\d{4}$/.test(tempPassword), tempPassword);
   await page.keyboard.press("Escape");
 
-  // Resources tab: real PDF accepted, disguised HTML rejected, javascript: link rejected
-  await page.getByRole("tab", { name: /Resources/ }).click();
-  const resCard = page.locator("section", { hasText: "Share something" });
-  await resCard.getByLabel("Title").fill("Chapter notes");
-  await resCard.getByLabel("Subject").fill("Science");
-  await resCard.locator('input[type="file"]').setInputFiles(EVIL);
-  await resCard.getByRole("button", { name: "Share with class" }).click();
-  check("upload: HTML disguised as PDF rejected", await seen(resCard.getByText("contents don't match")));
-  await resCard.locator('input[type="file"]').setInputFiles(NOTES);
-  await resCard.getByRole("button", { name: "Share with class" }).click();
-  check("upload: real PDF accepted", await seen(page.getByText("notes.pdf ·")));
-  await resCard.getByRole("radio", { name: "Web link" }).click();
-  await resCard.getByLabel("Title").fill("Evil");
-  await resCard.getByLabel("Subject").fill("X");
-  await resCard.getByLabel("URL").evaluate((el) => (el.type = "text"));
-  await resCard.getByLabel("URL").fill("javascript:alert(1)");
-  await resCard.getByRole("button", { name: "Share with class" }).click();
-  check("javascript: link rejected", await seen(resCard.getByText("Enter a full http(s) link.")));
+  await page.goto(`${BASE}/admin/courses`);
+  await page.getByLabel("Code").fill(CODE);
+  await page.getByLabel("Title").fill(`E2E Testing ${run}`);
+  await page.getByLabel("Department").fill("Computer Science & Engineering");
+  await page.getByLabel("Term").fill("Autumn 2026");
+  await page.getByLabel("Instructor").selectOption({ label: "Dr. Meera Iyer" });
+  await page.getByLabel("Weekly sections").fill("3");
+  await page.getByRole("button", { name: "Create course" }).click();
+  check("admin creates course with weekly sections", await seen(page.getByRole("cell", { name: new RegExp(CODE) })));
+  await page.context().close();
 
-  // Live tab: schedule a class starting in 5 minutes → joinable Jitsi link
-  await page.getByRole("tab", { name: /Live classes/ }).click();
-  const liveCard = page.locator("section", { hasText: "Schedule a live class" });
-  await liveCard.getByLabel("Topic").fill(`Live ${run}`);
-  await liveCard.getByLabel("Starts at").fill(localDT(new Date(Date.now() + 5 * 60_000)));
-  await liveCard.getByRole("button", { name: /Schedule/ }).click();
-  const startLink = page.getByRole("link", { name: "Start" }).first();
-  check("live class scheduled with Jitsi link", (await seen(page.getByText(`Live ${run}`))) && /^https:\/\/meet\.jit\.si\/eduWave-/.test((await startLink.getAttribute("href")) ?? ""));
+  /* ---------------------------- instructor ---------------------------- */
+  page = await newPage();
+  await signIn(page, "meera.iyer@eduwave.edu");
+  await page.waitForURL(`${BASE}/instructor`);
+  await page.goto(`${BASE}/instructor/courses`);
+  await page.getByText(`E2E Testing ${run}`).click();
+  await page.waitForURL(/\/instructor\/courses\/[0-9a-f-]{36}/);
+  courseUrl = page.url().split("#")[0];
+  check("instructor sees the new course with Week 1–3", (await seen(page.getByText("Week 1"))) && (await seen(page.getByText("Week 3"))));
 
-  // Create quiz (shuffled)
-  await page.goto(`${classUrl}/quizzes/new`);
-  await page.getByLabel("Title").fill(`E2E Quiz ${run}`);
-  await page.getByLabel("Subject").fill("Science");
-  await page.getByLabel("Time limit (minutes)").fill("2");
-  await page.locator("input[name=deadline]").fill(localDT(new Date(Date.now() + 24 * 3600 * 1000)));
-  await page.locator("form textarea").nth(0).fill("Water boils at (sea level)?");
-  await page.getByPlaceholder("Option 1").first().fill("100 °C");
-  await page.getByPlaceholder("Option 2").first().fill("50 °C");
+  // Settings: open self-enrolment
+  await page.getByRole("tab", { name: /Settings/ }).click();
+  await page.getByLabel("Enrolment key").fill(`key-${run}`);
+  await page.getByRole("button", { name: "Save settings" }).click();
+  check("instructor sets an enrolment key", await seen(page.getByText("Course settings saved.")));
+
+  // Content: add a link material to Week 1
+  await page.getByRole("tab", { name: /Content/ }).click();
+  const mat = page.locator("section", { hasText: "Add material" });
+  await mat.getByRole("radio", { name: "Web link" }).click();
+  await mat.getByLabel("Title").fill("Reading: testing pyramid");
+  await mat.getByLabel("URL").fill("https://en.wikipedia.org/wiki/Software_testing");
+  await mat.getByRole("button", { name: "Add to course" }).click();
+  check("instructor adds material to a section", await seen(page.getByText("Reading: testing pyramid")));
+
+  // Assignment
+  await page.goto(`${courseUrl}/assignments/new`);
+  await page.getByLabel("Title").fill(`Lab ${run}`);
+  await page.locator("textarea").fill("### Task\nWrite **three** unit tests.");
+  await page.locator("input[name=dueAt]").fill(localDT(new Date(Date.now() + 2 * 86_400_000)));
+  await page.getByLabel("Maximum points").fill("10");
+  await page.getByRole("button", { name: /Publish/ }).click();
+  await page.waitForURL(/\/instructor\/assignments\/[0-9a-f-]{36}$/, { timeout: 15000 });
+  assignmentId = page.url().split("/").pop();
+  check("instructor publishes an assignment", await seen(page.getByRole("heading", { name: `Lab ${run}` })));
+
+  // Quiz
+  await page.goto(`${courseUrl}/quizzes/new`);
+  await page.getByLabel("Title").fill(`Quiz ${run}`);
+  await page.getByLabel("Time limit (minutes)").fill("5");
+  await page.locator("input[name=deadline]").fill(localDT(new Date(Date.now() + 86_400_000)));
+  await page.locator("form textarea").nth(0).fill("2 + 2 = ?");
+  await page.getByPlaceholder("Option 1").first().fill("4");
+  await page.getByPlaceholder("Option 2").first().fill("5");
   await page.getByLabel("Option 1 is correct").first().check();
   await page.getByRole("button", { name: "Add question" }).click();
-  await page.locator("form textarea").nth(1).fill("Chemical symbol for gold?");
-  await page.getByPlaceholder("Option 1").nth(1).fill("Ag");
-  await page.getByPlaceholder("Option 2").nth(1).fill("Au");
+  await page.locator("form textarea").nth(1).fill("Capital of India?");
+  await page.getByPlaceholder("Option 1").nth(1).fill("Mumbai");
+  await page.getByPlaceholder("Option 2").nth(1).fill("New Delhi");
   await page.getByLabel("Option 2 is correct").nth(1).check();
   await page.getByRole("button", { name: /Publish quiz/ }).click();
-  await page.waitForURL(/\/teacher\/quizzes\/[0-9a-f-]{36}$/, { timeout: 15000 });
-  quizId = page.url().split("/").pop();
-  check("quiz published → analytics", await seen(page.getByText("Export CSV")));
-  const csv = await page.request.get(`${BASE}/teacher/quizzes/${quizId}/export`);
-  check("CSV export works for owner", csv.status() === 200 && csv.headers()["content-type"].startsWith("text/csv"));
-  await logout();
+  await page.waitForURL(/\/instructor\/quizzes\/[0-9a-f-]{36}$/, { timeout: 15000 });
+  const quizId = page.url().split("/").pop();
+  check("instructor publishes a quiz", await seen(page.getByText("Export CSV")));
 
-  // ---------- New student: forced password change ----------
-  await loginStudent(roll, tempPassword);
+  // Announcement
+  await page.goto(`${courseUrl}#discussions`);
+  await page.getByRole("tab", { name: /Discussions/ }).click();
+  const post = page.locator("section", { hasText: "New post or announcement" });
+  await post.getByLabel("Title").fill(`Welcome to ${CODE}`);
+  await post.getByLabel("Message").fill("Office hours are **Tuesdays 3–4 pm**.");
+  await post.getByLabel(/Post as announcement/).check();
+  await post.getByRole("button", { name: "Post" }).click();
+  await page.waitForURL(/\/discussions\/[0-9a-f-]{36}$/);
+  check("instructor posts an announcement", await seen(page.getByText("Announcement").first()));
+  await page.context().close();
+
+  /* ------------------------------ student ------------------------------ */
+  page = await newPage();
+  await signIn(page, SID.toLowerCase(), tempPassword); // student IDs are case-insensitive
   await page.waitForURL(/\/student\/account\?required=1/);
-  check("temp password → forced to change password", await seen(page.getByText("Choose your own password to continue")));
-  await page.goto(`${BASE}/student`);
-  check("can't use app before changing password", await page.waitForURL(/\/student\/account/, { timeout: 8000 }).then(() => true, () => false));
+  check("temp password → forced to choose own password", await seen(page.getByText("Choose your own password to continue")));
   await page.getByLabel("Current password").fill(tempPassword);
   await page.getByLabel("New password", { exact: true }).fill("password123");
   await page.getByLabel("Confirm new password").fill("password123");
   await page.getByRole("button", { name: "Update password" }).click();
-  check("weak/common password rejected", await seen(page.getByText("at least 10 characters")));
+  check("weak/common password rejected", await seen(page.getByText(/at least 10 characters|too common/)));
   await page.getByLabel("New password", { exact: true }).fill("correct horse battery");
   await page.getByLabel("Confirm new password").fill("correct horse battery");
   await page.getByRole("button", { name: "Update password" }).click();
-  await page.waitForURL(`${BASE}/student`, { timeout: 10000 });
+  await page.waitForURL(`${BASE}/student`);
   check("strong password accepted → dashboard", true);
 
-  const notif = await (await page.request.get(`${BASE}/api/notifications`)).json();
-  check("in-app notifications for new quiz/resource/live", notif.unread >= 3, `unread=${notif.unread}`);
+  // Self-enrol from the catalogue
+  await page.goto(`${BASE}/student/catalog`);
+  const card = page.locator("article", { hasText: `E2E Testing ${run}` });
+  await card.getByRole("button", { name: /Enrol with key/ }).click();
+  await dialog(page).getByLabel("Enrolment key").fill("wrong-key");
+  await dialog(page).getByRole("button", { name: "Enrol" }).click();
+  check("wrong enrolment key rejected", await seen(dialog(page).getByText("isn't correct")));
+  await dialog(page).getByLabel("Enrolment key").fill(`key-${run}`);
+  await dialog(page).getByRole("button", { name: "Enrol" }).click();
+  await page.waitForURL(/\/student\/courses\/[0-9a-f-]{36}/, { timeout: 15000 });
+  check("correct key enrols and opens the course", await seen(page.getByText("Reading: testing pyramid")));
 
-  // File download as class member
-  const fileHref = await (async () => {
-    await page.goto(`${BASE}/student/resources`);
-    return page.getByRole("link", { name: /Chapter notes/ }).first().getAttribute("href");
-  })();
-  const file = await page.request.get(`${BASE}${fileHref}`);
-  check("student can download class file (pdf, nosniff)", file.status() === 200 && file.headers()["content-type"] === "application/pdf" && file.headers()["x-content-type-options"] === "nosniff");
+  // Completion tracking
+  await page.getByRole("checkbox", { name: "Mark as done" }).first().click();
+  await page.waitForTimeout(800);
+  await page.reload();
+  check("marking material done updates progress", await seen(page.getByRole("img", { name: /Course progress: [1-9]\d*%/ })));
 
-  // Take the quiz
+  // Assignment submission with a file
+  await page.goto(`${BASE}/student/assignments/${assignmentId}`);
+  await page.getByLabel("Online text").fill("My tests: `testAdd`, `testSub`, `testMul`.");
+  await page.locator('input[type="file"]').setInputFiles(REPORT);
+  await page.getByRole("button", { name: "Submit assignment" }).click();
+  check("student submits assignment (text + file)", await seen(page.getByText(/Submitted/).first()));
+  await page.reload();
+  submissionFileHref = await page.getByRole("link", { name: /report\.pdf/ }).first().getAttribute("href");
+
+  // Quiz
   await page.goto(`${BASE}/student/quizzes/${quizId}`);
   await page.getByRole("button", { name: "Start quiz" }).click();
   await page.getByText("Time left").waitFor();
-  const html = await page.content();
-  check("answer key NOT in page payload during attempt", !/correctIndex\\?"?:\s*\d/.test(html));
-  // Questions are shuffled, so answer by content.
+  check("answer key NOT in page payload during attempt", !/correctIndex\\?"?:\s*\d/.test(await page.content()));
   for (let i = 0; i < 2; i++) {
     const prompt = await page.locator("h2").filter({ hasText: /\?$/, visible: true }).first().innerText();
-    await page.getByText(prompt.includes("Water") ? "100 °C" : "Ag", { exact: true }).filter({ visible: true }).click(); // 1 right, 1 wrong
+    await page.getByText(prompt.startsWith("2 + 2") ? "4" : "Mumbai", { exact: true }).filter({ visible: true }).click(); // 1 right, 1 wrong
     await page.getByText("Saved").filter({ visible: true }).waitFor();
     if (i === 0) await page.getByRole("button", { name: /Next/ }).click();
   }
-  await page.reload();
-  check("answers persist across reload", await seen(page.getByText("2 of 2 answered")));
   page.once("dialog", (d) => d.accept());
   await page.getByRole("button", { name: "Submit" }).click();
-  await page.getByText("Your score").waitFor();
-  check("server-graded score 1 / 2 (with shuffle mapping)", await seen(page.getByText("1 / 2")));
-  check("answers hidden until deadline", await seen(page.getByText(/appear after the deadline/)));
+  check("server-graded quiz score 1 / 2", await seen(page.getByText("1 / 2")));
 
-  // Whiteboard: create, draw a rectangle, autosave
-  await page.goto(`${BASE}/student/boards`);
-  await page.getByPlaceholder(/New board title/).fill("My diagram");
-  await page.getByRole("button", { name: "New board" }).click();
-  await page.waitForURL(/\/student\/boards\/[0-9a-f-]{36}/);
-  const boardUrl = page.url();
-  const canvas = page.locator("canvas.interactive, .excalidraw canvas").last();
-  check("whiteboard (Excalidraw) loads", await seen(canvas, 15000));
-  await page.keyboard.press("r");
-  const box = await canvas.boundingBox();
-  await page.mouse.move(box.x + 200, box.y + 200);
-  await page.mouse.down();
-  await page.mouse.move(box.x + 400, box.y + 320, { steps: 8 });
-  await page.mouse.up();
-  check("whiteboard autosaves", await seen(page.getByText("Saved", { exact: true }), 10000) && (await page.getByText("Saved", { exact: true }).isVisible()));
-  await page.waitForTimeout(2500);
-  await page.reload();
-  const saved = await page.request.get(boardUrl);
-  check("whiteboard reloads", saved.status() === 200);
+  // Discussion reply + announcement visible
+  await page.goto(`${courseUrl.replace("/instructor/", "/student/")}`);
+  await page.getByRole("tab", { name: /Discussions/ }).click();
+  const ann = page.getByText(`Welcome to ${CODE}`).filter({ visible: true });
+  check("student sees the announcement", await seen(ann));
+  await ann.first().click();
+  await page.getByLabel("Reply").fill("Thank you!");
+  await page.getByRole("button", { name: "Post reply" }).click();
+  check("student replies in discussion", await seen(page.getByText("Thank you!")));
 
-  await page.goto(`${BASE}/student/tutor`);
-  check("AI tutor shows setup message when Ollama is off", await seen(page.getByText(/isn.t switched on/)));
+  // Calendar
+  await page.goto(`${BASE}/student/calendar`);
+  check("calendar lists the new assignment", await seen(page.getByText(`Lab ${run}`)));
 
-  await page.goto(`${BASE}/student/stats`);
-  check("progress page renders charts", await seen(page.locator(".recharts-surface")));
-  await page.goto(`${BASE}/student/account`);
-  check("security page lists sessions & activity", (await seen(page.getByText("This device"))) && (await seen(page.getByText("Password changed"))));
-  await logout();
+  // Security: student can't reach instructor pages or exports
+  const exp = await page.request.get(`${courseUrl}/gradebook/export`);
+  check("student blocked from gradebook export", exp.status() === 401 || !exp.headers()["content-type"]?.includes("csv"));
+  await page.goto(`${BASE}/instructor`);
+  check("student visiting /instructor is redirected", await page.waitForURL(`${BASE}/student`, { timeout: 8000 }).then(() => true, () => false));
+  const ownFile = await page.request.get(`${BASE}${submissionFileHref}`);
+  check("student can download own submission file", ownFile.status() === 200);
+  await page.context().close();
 
-  // ---------- Seeded student: revealed answers, explanations, podium ----------
-  await loginStudent("S001", "student123");
+  // Another student must NOT be able to read that submission file or the course
+  const other = await newPage();
+  await signIn(other, "24CS1002");
+  await other.waitForURL(`${BASE}/student`);
+  const peek = await other.request.get(`${BASE}${submissionFileHref}`);
+  check("other student can't download someone else's submission", peek.status() === 404);
+  await other.goto(courseUrl.replace("/instructor/", "/student/"));
+  check("non-enrolled student gets 404 for the course", await seen(other.getByText("Not found")));
+  await other.context().close();
+
+  /* --------------------------- instructor grades --------------------------- */
+  page = await newPage();
+  await signIn(page, "meera.iyer@eduwave.edu");
+  await page.waitForURL(`${BASE}/instructor`);
+  check("grading queue shows the submission", await seen(page.getByText(`Lab ${run}`)));
+  await page.goto(`${BASE}/instructor/assignments/${assignmentId}`);
+  const sub = page.locator("details", { hasText: "Test Student" });
+  if (!(await sub.evaluate((d) => d.open))) await sub.locator("summary").click();
+  // Bypass the browser's own max= check to prove the SERVER enforces the limit.
+  await sub.getByLabel(/Points/).evaluate((el) => el.removeAttribute("max"));
+  await sub.getByLabel(/Points/).fill("12");
+  await sub.getByRole("button", { name: "Save grade" }).click();
+  check("server rejects grade above maximum", await seen(sub.getByText("Maximum is 10 points.")));
+  await sub.getByLabel(/Points/).fill("9");
+  await sub.getByLabel("Feedback").fill("Good coverage. Add an edge case for overflow.");
+  await sub.getByRole("button", { name: "Save grade" }).click();
+  check("instructor grades with feedback", await seen(sub.getByText("9/10")));
+  const csv = await page.request.get(`${courseUrl}/gradebook/export`);
+  const csvText = await csv.text();
+  check("gradebook CSV export includes the grade", csv.status() === 200 && csvText.includes(SID) && csvText.includes("9"));
+  await page.context().close();
+
+  // Another instructor can't open Meera's course
+  page = await newPage();
+  await signIn(page, "rahul.verma@eduwave.edu");
+  await page.waitForURL(`${BASE}/instructor`);
+  await page.goto(courseUrl);
+  check("other instructor gets 404 for the course", await seen(page.getByText("Not found")));
+  await page.context().close();
+
+  /* -------------------------- student sees grade -------------------------- */
+  page = await newPage();
+  await signIn(page, SID, "correct horse battery");
   await page.waitForURL(`${BASE}/student`);
-  await page.getByText("Cells & organisms").first().click();
-  check("after deadline: answers + explanations revealed", await seen(page.getByText("Why:")));
-  await page.goto(`${BASE}/student/leaderboard`);
-  check("leaderboard podium", await seen(page.getByLabel("Top three")));
-  // Another user's board must not be reachable
-  const other = await page.request.get(boardUrl.replace("/student/", "/student/"));
-  const otherText = await other.text();
-  check("other student's board → not found", otherText.includes("Not found") || other.status() === 404);
-  // Student can't download teacher export
-  const exp = await page.request.get(`${BASE}/teacher/quizzes/${quizId}/export`);
-  check("student blocked from CSV export", exp.status() === 401 || exp.url().includes("/student"));
-  await logout();
+  const notes = await (await page.request.get(`${BASE}/api/notifications`)).json();
+  check("student notified of the grade", notes.items.some((n) => /graded/.test(n.title)), `unread=${notes.unread}`);
+  await page.goto(`${BASE}/student/assignments/${assignmentId}`);
+  check("student sees grade and feedback", (await seen(page.getByText("9 / 10"))) && (await seen(page.getByText(/edge case for overflow/))));
+  await page.goto(`${BASE}/student/grades`);
+  check("grades page shows a course total", await seen(page.getByRole("cell", { name: CODE })));
+  await page.context().close();
 
-  // ---------- Lockout ----------
+  /* ----------------------- admin deactivates account ----------------------- */
+  const studentPage = await newPage();
+  await signIn(studentPage, SID, "correct horse battery");
+  await studentPage.waitForURL(`${BASE}/student`);
+  page = await newPage();
+  await signIn(page, "admin@eduwave.edu");
+  await page.waitForURL(`${BASE}/admin`);
+  await page.goto(`${BASE}/admin/users?q=${SID}`);
+  page.once("dialog", (d) => d.accept());
+  await page.getByRole("button", { name: /Deactivate Test Student/ }).click();
+  check("admin deactivates the account", await seen(page.getByText("Deactivated")));
+  await studentPage.goto(`${BASE}/student`);
+  check("deactivated user's live session is revoked", await studentPage.waitForURL(/\/login/, { timeout: 8000 }).then(() => true, () => false));
+  await signIn(studentPage, SID, "correct horse battery");
+  check("deactivated user can't sign in", await seen(studentPage.getByText("Incorrect email/ID or password.")));
+  await page.goto(`${BASE}/admin/audit`);
+  check("audit log records the deactivation", await seen(page.getByText("user deactivated")));
+  await page.context().close();
+  await studentPage.context().close();
+
+  /* ------------------------------- lockout ------------------------------- */
+  page = await newPage();
   for (let i = 0; i < 5; i++) {
-    await loginStudent("S002", "wrong-password-" + i);
-    await page.getByText("Incorrect login details.").waitFor();
+    await signIn(page, "24CS1003", `wrong-${i}`);
+    await page.getByText("Incorrect email/ID or password.").waitFor();
   }
-  await loginStudent("S002", "student123");
+  await signIn(page, "24CS1003");
   check("account locked after 5 failures (even with right password)", await seen(page.getByText(/Too many failed attempts/)));
-
-  // ---------- Teacher sees result & security log ----------
-  await loginTeacher();
-  await page.goto(`${BASE}/teacher/quizzes/${quizId}`);
-  check("teacher analytics: 1 submission + distribution chart", (await seen(page.getByText(/^1 \/ \d+$/))) && (await seen(page.locator(".recharts-surface"))));
-  await page.goto(`${BASE}/teacher/account`);
-  check("teacher audit log shows sign-ins", await seen(page.getByText("Signed in")));
 } catch (err) {
   check("unexpected error", false, err.message.split("\n")[0]);
-  await page.screenshot({ path: join(dir, "failure.png"), fullPage: true });
-  console.log("Screenshot:", join(dir, "failure.png"));
-  console.log("URL at failure:", page.url());
+  if (page) {
+    await page.screenshot({ path: join(dir, "failure.png"), fullPage: true }).catch(() => {});
+    console.log("URL at failure:", page.url(), "\nScreenshot:", join(dir, "failure.png"));
+  }
 } finally {
   await browser.close();
   const failed = results.filter((r) => !r.ok).length;

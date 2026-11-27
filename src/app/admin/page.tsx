@@ -24,7 +24,7 @@ export default async function AdminHome() {
         <StatTile label="Courses" value={stats.courses} icon={<BookOpen />} tone="neutral" hint={`${stats.enrollments} enrolments`} />
         <StatTile label="Submissions" value={stats.submissions} icon={<Inbox />} tone="neutral" hint="assignments + quizzes" />
       </div>
-      <div className="grid gap-6 xl:grid-cols-[1fr_20rem]">
+      <div className="grid gap-6 xl:grid-cols-[1fr_20rem] [&>*]:min-w-0">
         <Card
           title="Recent security events"
           icon={<ShieldAlert />}

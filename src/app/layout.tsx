@@ -8,7 +8,7 @@ const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"]
 
 export const metadata: Metadata = {
   title: { default: "eduWave", template: "%s · eduWave" },
-  description: "Classes, quizzes, live lessons and resources for teachers and students.",
+  description: "eduWave: an open-source learning management system for universities. Courses, assignments, quizzes, grades, discussions and live classes.",
 };
 
 // Applies the saved theme before first paint, so dark-mode users don't see a white flash.

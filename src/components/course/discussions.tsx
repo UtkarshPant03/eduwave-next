@@ -5,12 +5,13 @@ import { ActionForm } from "@/components/action-form";
 import { Avatar, Badge, Card, Empty, Field, Input, Textarea } from "@/components/ui";
 import { listThreads } from "@/lib/data/community";
 import { formatRelative } from "@/lib/format";
+import { plainText } from "@/components/markdown";
 
 /** Thread list + "start a discussion" form, shared by students and instructors. */
 export async function Discussions({ courseId, role, now }: { courseId: string; role: "student" | "instructor"; now: number }) {
   const threads = await listThreads(courseId);
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_22rem]">
+    <div className="grid gap-6 lg:grid-cols-[1fr_22rem] [&>*]:min-w-0">
       <Card title="Discussions" icon={<MessagesSquare />} description="Ask questions, share resources and help each other.">
         {threads.length === 0 ? (
           <Empty icon={<MessagesSquare />}>No discussions yet. Start the first one.</Empty>
@@ -27,7 +28,7 @@ export async function Discussions({ courseId, role, now }: { courseId: string; r
                       {t.locked && <Badge><Lock /> Locked</Badge>}
                       <span className="truncate">{t.title}</span>
                     </p>
-                    <p className="mt-0.5 line-clamp-1 text-sm text-muted">{t.body}</p>
+                    <p className="mt-0.5 line-clamp-1 text-sm text-muted">{plainText(t.body)}</p>
                     <p className="mt-1 text-xs text-muted">
                       {t.author}
                       {t.authorRole !== "student" && " (instructor)"} · {formatRelative(t.lastActivityAt, now)} · {t.replies} {t.replies === 1 ? "reply" : "replies"}

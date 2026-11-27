@@ -6,7 +6,7 @@ import { z } from "zod";
 import { db, schema } from "@/db";
 import { requireUser } from "@/lib/auth/dal";
 
-// Personal to-do list, shared by teachers and students.
+// Personal to-do list, shared by every role.
 // Every query is scoped by userId, so nobody can touch someone else's tasks.
 
 const taskInput = z.object({

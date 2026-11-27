@@ -13,6 +13,8 @@ export default async function GradeAssignmentPage({ params }: PageProps<"/instru
   const { course, assignment, rows } = await getAssignmentForInstructor(user, assignmentId);
   const submitted = rows.filter((r) => r.submissionId);
   const graded = submitted.filter((r) => r.grade != null);
+  // Open only the first ungraded submission: the instructor lands where grading should continue.
+  const nextToGrade = rows.find((r) => r.submissionId && r.grade == null)?.studentId;
   const avg = graded.length ? (graded.reduce((s, r) => s + (r.grade ?? 0), 0) / graded.length / assignment.maxPoints) * 100 : null;
 
   return (
@@ -31,13 +33,13 @@ export default async function GradeAssignmentPage({ params }: PageProps<"/instru
         <StatTile label="Average" value={formatPercent(avg)} icon={<Clock />} tone="neutral" />
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1fr_24rem]">
+      <div className="grid gap-6 xl:grid-cols-[1fr_24rem] [&>*]:min-w-0">
         <section className="space-y-3">
           <h2 className="text-sm font-semibold text-muted">Submissions</h2>
           {rows.map((r) => {
             const late = r.submittedAt && r.submittedAt > assignment.dueAt;
             return (
-              <details key={r.studentId} className="group rounded-2xl border border-border bg-surface shadow-card" open={Boolean(r.submissionId && r.grade == null) && graded.length < 3}>
+              <details key={r.studentId} className="group rounded-2xl border border-border bg-surface shadow-card" open={r.studentId === nextToGrade}>
                 <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
                   <Avatar name={r.name} size="sm" />
                   <span className="min-w-0 flex-1">
@@ -49,7 +51,7 @@ export default async function GradeAssignmentPage({ params }: PageProps<"/instru
                   <ChevronDown className="size-4 text-muted transition group-open:rotate-180" />
                 </summary>
                 {r.submissionId && (
-                  <div className="grid gap-5 border-t border-border p-4 lg:grid-cols-[1fr_16rem]">
+                  <div className="grid gap-5 border-t border-border p-4 lg:grid-cols-[1fr_16rem] [&>*]:min-w-0">
                     <div className="space-y-3 text-sm">
                       {r.text ? <div className="rounded-xl bg-surface-2/60 p-4"><Markdown text={r.text} /></div> : <p className="text-muted">No text submitted.</p>}
                       {r.fileId && (

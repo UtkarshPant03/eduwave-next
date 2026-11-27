@@ -10,6 +10,7 @@ import { requireUser } from "@/lib/auth/dal";
 import { rateLimit } from "@/lib/auth/throttle";
 import { firstIssue, type FormState } from "@/lib/form";
 import { notifyCourse, notifyUser } from "@/lib/notify";
+import { plainText } from "@/components/markdown";
 
 const uuid = z.uuid();
 
@@ -35,7 +36,7 @@ export async function createThread(_: FormState, formData: FormData): Promise<Fo
     .returning({ id: schema.threads.id });
 
   if (isAnnouncement) {
-    await notifyCourse(course.id, { title: `${course.code} announcement: ${parsed.data.title}`, body: parsed.data.body.slice(0, 140), link: `/student/courses/${course.id}/discussions/${t.id}` }, user.id);
+    await notifyCourse(course.id, { title: `${course.code} announcement: ${parsed.data.title}`, body: plainText(parsed.data.body).slice(0, 140), link: `/student/courses/${course.id}/discussions/${t.id}` }, user.id);
   }
   redirect(`/${user.role === "student" ? "student" : "instructor"}/courses/${course.id}/discussions/${t.id}`);
 }

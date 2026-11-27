@@ -7,7 +7,7 @@
  * If OLLAMA_URL is not set, AI features are hidden and the rest of the app works normally.
  *
  * Limitations to teach: small local models make mistakes. AI-generated questions are
- * drafts the teacher must review, and the tutor tells students to verify answers.
+ * drafts the instructor must review, and the tutor tells students to verify answers.
  */
 import "server-only";
 import { z } from "zod";
@@ -78,7 +78,7 @@ const generatedSchema = z.object({
 
 export type GeneratedQuestion = z.infer<typeof generatedSchema>["questions"][number];
 
-/** Drafts multiple-choice questions from teacher-provided material, using JSON-schema output. */
+/** Drafts multiple-choice questions from instructor-provided material, using JSON-schema output. */
 export async function generateQuestions(material: string, count: number, subject: string): Promise<GeneratedQuestion[]> {
   const res = await fetch(`${process.env.OLLAMA_URL}/api/chat`, {
     method: "POST",

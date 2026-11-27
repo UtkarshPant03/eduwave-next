@@ -172,3 +172,27 @@ export function gradingQueue(instructorId: string, limit = 8) {
     .orderBy(asc(submissions.submittedAt))
     .limit(limit);
 }
+
+/* ================================ editing ================================ */
+
+/** An assignment plus what limits editing it (the highest grade already given). */
+export async function getAssignmentForEdit(user: CurrentUser, assignmentId: string) {
+  const assignment = await db.query.assignments.findFirst({ where: (a, { eq }) => eq(a.id, assignmentId) });
+  if (!assignment) notFound();
+  const course = await courseForInstructor(user, assignment.courseId);
+  const [{ topGrade, submitted }] = await db
+    .select({ topGrade: sql<string | null>`max(${submissions.grade})`, submitted: count() })
+    .from(submissions)
+    .where(eq(submissions.assignmentId, assignment.id));
+  return { course, assignment, topGrade: topGrade == null ? null : Number(topGrade), submitted };
+}
+
+/** A quiz with its questions (answer key included: instructors only) and its attempt count. */
+export async function getQuizForEdit(user: CurrentUser, quizId: string) {
+  const quiz = await db.query.quizzes.findFirst({ where: (q, { eq }) => eq(q.id, quizId) });
+  if (!quiz) notFound();
+  const course = await courseForInstructor(user, quiz.courseId);
+  const qs = await db.select().from(questions).where(eq(questions.quizId, quiz.id)).orderBy(asc(questions.position));
+  const attemptCount = await db.$count(attempts, eq(attempts.quizId, quiz.id));
+  return { course, quiz, questions: qs, attemptCount };
+}

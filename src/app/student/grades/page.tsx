@@ -32,7 +32,7 @@ export default async function GradesPage() {
       {courses.length === 0 ? (
         <Empty>You&apos;re not enrolled in any courses.</Empty>
       ) : (
-        <div className="grid gap-6 xl:grid-cols-[1fr_22rem]">
+        <div className="grid gap-6 xl:grid-cols-[1fr_22rem] [&>*]:min-w-0">
           <Card title="By course">
             <Table head={["Course", "Credits", "Points", "Percent", "Grade"]}>
               {books.map(({ course, row }) => (

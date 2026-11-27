@@ -2,41 +2,59 @@
 
 import { Eye, PencilLine } from "lucide-react";
 import { useState, useTransition } from "react";
-import { createAssignment } from "@/app/actions/instructor";
+import { createAssignment, updateAssignment } from "@/app/actions/instructor";
 import { Markdown } from "@/components/markdown";
 import { Button, Card, Field, FormMessage, Input, Select, Textarea } from "@/components/ui";
+import { LocalDateTimeInput } from "./local-datetime-input";
 
-/** Assignment editor with a live Markdown preview (same renderer students see). */
-export function AssignmentBuilder({ courseId, sections }: { courseId: string; sections: { id: string; title: string }[] }) {
+export type AssignmentInitial = { id: string; title: string; instructions: string; sectionId: string | null; dueAt: string; maxPoints: number; lateDays: number };
+
+/**
+ * Assignment editor with a live Markdown preview (same renderer students see).
+ * With `initial` it edits an existing assignment instead of creating one.
+ */
+export function AssignmentBuilder({
+  courseId,
+  sections,
+  initial,
+  minPoints = 1,
+}: {
+  courseId: string;
+  sections: { id: string; title: string }[];
+  initial?: AssignmentInitial;
+  /** The highest grade already awarded: the maximum can't go below it. */
+  minPoints?: number;
+}) {
   const [error, setError] = useState<string>();
-  const [text, setText] = useState("");
+  const [text, setText] = useState(initial?.instructions ?? "");
   const [tab, setTab] = useState<"write" | "preview">("write");
   const [pending, start] = useTransition();
 
   return (
     <form
-      className="grid gap-6 lg:grid-cols-[1fr_20rem]"
+      className="grid gap-6 lg:grid-cols-[1fr_20rem] [&>*]:min-w-0"
       onSubmit={(e) => {
         e.preventDefault();
         const fd = new FormData(e.currentTarget);
         const due = String(fd.get("dueAt") ?? "");
         start(async () => {
-          const res = await createAssignment({
-            courseId,
+          const fields = {
             sectionId: String(fd.get("sectionId") ?? ""),
             title: String(fd.get("title")),
             instructions: text,
             dueAt: due ? new Date(due).toISOString() : "",
             maxPoints: Number(fd.get("maxPoints")),
             lateDays: Number(fd.get("lateDays")),
-          });
+          };
+          // On success both actions redirect; a value comes back only on failure.
+          const res = initial ? await updateAssignment({ id: initial.id, ...fields }) : await createAssignment({ courseId, ...fields });
           if (res?.error) setError(res.error);
         });
       }}
     >
       <Card title="Assignment">
         <div className="grid gap-3">
-          <Field label="Title"><Input name="title" required maxLength={160} placeholder="Lab 3: Implementing a hash table" /></Field>
+          <Field label="Title"><Input name="title" required maxLength={160} defaultValue={initial?.title} placeholder="Lab 3: Implementing a hash table" /></Field>
           <div>
             <div className="mb-1.5 flex items-center justify-between">
               <span className="text-sm font-medium">Instructions</span>
@@ -58,20 +76,20 @@ export function AssignmentBuilder({ courseId, sections }: { courseId: string; se
         <Card title="Settings">
           <div className="grid gap-3">
             <Field label="Section">
-              <Select name="sectionId" defaultValue={sections[0]?.id ?? ""}>
+              <Select name="sectionId" defaultValue={initial ? (initial.sectionId ?? "") : (sections[0]?.id ?? "")}>
                 <option value="">General</option>
                 {sections.map((s) => <option key={s.id} value={s.id}>{s.title}</option>)}
               </Select>
             </Field>
-            <Field label="Due"><Input name="dueAt" type="datetime-local" required /></Field>
-            <Field label="Maximum points"><Input name="maxPoints" type="number" min={1} max={1000} defaultValue={100} required /></Field>
+            <Field label="Due"><LocalDateTimeInput name="dueAt" iso={initial?.dueAt} required /></Field>
+            <Field label="Maximum points"><Input name="maxPoints" type="number" min={minPoints} max={1000} defaultValue={initial?.maxPoints ?? 100} required /></Field>
             <Field label="Late submissions" hint="Accepted (and marked late) for this many days after the due date.">
-              <Input name="lateDays" type="number" min={0} max={30} defaultValue={2} required />
+              <Input name="lateDays" type="number" min={0} max={30} defaultValue={initial?.lateDays ?? 2} required />
             </Field>
           </div>
         </Card>
         <FormMessage state={{ error }} />
-        <Button disabled={pending} className="w-full">{pending ? "Publishing…" : "Publish & notify students"}</Button>
+        <Button disabled={pending} className="w-full">{initial ? (pending ? "Saving…" : "Save changes") : pending ? "Publishing…" : "Publish & notify students"}</Button>
       </div>
     </form>
   );

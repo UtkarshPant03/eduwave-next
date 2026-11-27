@@ -18,10 +18,11 @@ async function main() {
     await db.$client.end();
     console.log("Migrated Postgres database.");
   } else {
-    const client = new PGlite(process.env.PGLITE_DIR ?? "./.pglite");
+    const dir = process.env.PGLITE_DIR ?? "./.pglite";
+    const client = new PGlite(dir);
     await migratePglite(drizzlePglite(client), { migrationsFolder });
     await client.close();
-    console.log("Migrated local PGlite database in ./.pglite");
+    console.log(`Migrated local PGlite database in ${dir}`);
   }
 }
 

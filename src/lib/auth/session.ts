@@ -75,7 +75,7 @@ export async function revokeOtherSessions(userId: string) {
   await db.delete(schema.sessions).where(where);
 }
 
-/** Logs out all devices of a user (used when a teacher resets a student's password). */
+/** Logs out all devices of a user (used when an admin resets a user's password). */
 export async function revokeAllSessions(userId: string) {
   await db.delete(schema.sessions).where(eq(schema.sessions.userId, userId));
 }

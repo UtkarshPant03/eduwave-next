@@ -4,7 +4,7 @@ import { Tabs } from "@/components/client/tabs";
 import { CourseHero } from "@/components/course/course-hero";
 import { Discussions } from "@/components/course/discussions";
 import { CourseOutline } from "@/components/course/outline";
-import { Markdown } from "@/components/markdown";
+import { Markdown, plainText } from "@/components/markdown";
 import { Badge, Card, Empty, Table } from "@/components/ui";
 import { db } from "@/db";
 import { courseForStudent } from "@/lib/access";
@@ -42,14 +42,14 @@ export default async function StudentCoursePage({ params }: PageProps<"/student/
             id: "content",
             label: <><LayoutList className="size-4" /> Content</>,
             content: (
-              <div className="grid gap-6 xl:grid-cols-[1fr_20rem]">
+              <div className="grid gap-6 xl:grid-cols-[1fr_20rem] [&>*]:min-w-0">
                 <CourseOutline courseId={course.id} sections={outline} mode="student" now={now} liveLinks={liveLinks} />
                 <div className="space-y-6">
                   {announcement && (
                     <Link href={`/student/courses/${course.id}/discussions/${announcement.id}`} className="card-hover block rounded-2xl border border-accent/30 bg-accent/5 p-4 text-sm">
                       <p className="flex items-center gap-2 text-xs font-medium text-accent"><Megaphone className="size-3.5" /> Latest announcement · {formatRelative(announcement.createdAt, now)}</p>
                       <p className="mt-1 font-medium">{announcement.title}</p>
-                      <p className="mt-0.5 line-clamp-3 text-muted">{announcement.body}</p>
+                      <p className="mt-0.5 line-clamp-3 text-muted">{plainText(announcement.body)}</p>
                     </Link>
                   )}
                   {course.description && (

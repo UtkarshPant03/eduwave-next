@@ -251,14 +251,8 @@ export function ProgressRing({ value, size = 56, label }: { value: number; size?
   return (
     <div className="relative shrink-0" style={{ width: size, height: size }} role="img" aria-label={`${label}: ${Math.round(pct)}%`}>
       <svg viewBox="0 0 36 36" className="size-full -rotate-90" aria-hidden>
-        <defs>
-          <linearGradient id="ring-grad" x1="0" x2="1" y1="0" y2="1">
-            <stop offset="0%" stopColor="var(--accent)" />
-            <stop offset="100%" stopColor="var(--accent-2)" />
-          </linearGradient>
-        </defs>
         <circle cx="18" cy="18" r={r} fill="none" stroke="var(--surface-2)" strokeWidth="3.5" />
-        <circle cx="18" cy="18" r={r} fill="none" stroke="url(#ring-grad)" strokeWidth="3.5" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - pct / 100)} className="transition-[stroke-dashoffset] duration-700" />
+        <circle cx="18" cy="18" r={r} fill="none" stroke="var(--accent)" strokeWidth="3.5" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - pct / 100)} className="transition-[stroke-dashoffset] duration-700" />
       </svg>
       <span className="absolute inset-0 grid place-items-center text-[11px] font-semibold tabular-nums">{Math.round(pct)}%</span>
     </div>
