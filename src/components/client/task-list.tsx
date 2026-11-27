@@ -81,13 +81,13 @@ export function TaskListClient({ tasks, today }: { tasks: Task[]; today: string 
       </div>
 
       {visible.length === 0 ? (
-        <p className="py-4 text-center text-sm text-muted">{optimistic.length ? "All done. Nice work!" : "Nothing on your list."}</p>
+        <p className="py-4 text-center text-sm text-muted">{optimistic.length ? "All tasks are complete." : "Nothing on your list."}</p>
       ) : (
         <ul className="divide-y divide-border">
           {visible.map((t) => {
             const overdue = !t.done && t.dueDate && t.dueDate.toISOString().slice(0, 10) < today;
             return (
-              <li key={t.id} className="group flex items-center gap-3 py-2 text-sm animate-fade-in">
+              <li key={t.id} className="group flex items-center gap-3 py-2 text-sm">
                 <input
                   type="checkbox"
                   checked={t.done}

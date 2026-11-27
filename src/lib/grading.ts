@@ -36,5 +36,7 @@ export function courseTotal(cells: GradeCell[]) {
   const possible = counted.reduce((s, c) => s + c.possible, 0);
   const earned = counted.reduce((s, c) => s + (c.earned ?? 0), 0);
   const percent = possible > 0 ? (earned / possible) * 100 : null;
-  return { earned, possible, percent, letter: letterFor(percent) };
+  // Rounding policy: the letter follows the whole-number percentage that is DISPLAYED
+  // (half up), so a student never sees "90%" next to a grade band that starts at 90.
+  return { earned, possible, percent, letter: letterFor(percent == null ? null : Math.round(percent)) };
 }

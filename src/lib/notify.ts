@@ -7,9 +7,10 @@
  */
 import "server-only";
 import { after } from "next/server";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import nodemailer, { type Transporter } from "nodemailer";
 import { db, schema } from "@/db";
+import { serverEnv } from "@/lib/env";
 
 type Message = { title: string; body?: string; link?: string };
 
@@ -35,7 +36,8 @@ async function sendMail(recipients: string[], msg: Message) {
   const mailer = getTransport();
   if (!mailer || recipients.length === 0) return;
   after(async () => {
-    const appUrl = process.env.APP_URL ?? "http://localhost:3000";
+    // Required in production (checked at startup), so links never point at localhost there.
+    const appUrl = serverEnv().APP_URL ?? "http://localhost:3000";
     try {
       await mailer.sendMail({
         from: process.env.SMTP_FROM ?? process.env.SMTP_USER,
@@ -53,6 +55,9 @@ async function sendMail(recipients: string[], msg: Message) {
 
 /** Notifies every student enrolled in a course (optionally excluding one user, e.g. the author). */
 export async function notifyCourse(courseId: string, msg: Message, excludeUserId?: string) {
+  // Draft (unpublished) courses stay private, even from students already enrolled in them.
+  const course = await db.query.courses.findFirst({ where: (c, { eq }) => eq(c.id, courseId), columns: { published: true } });
+  if (!course?.published) return;
   const members = await db
     .select({ id: schema.users.id, email: schema.users.email })
     .from(schema.enrollments)
@@ -62,6 +67,14 @@ export async function notifyCourse(courseId: string, msg: Message, excludeUserId
   if (targets.length === 0) return;
   await db.insert(schema.notifications).values(targets.map((m) => ({ userId: m.id, ...msg })));
   await sendMail(targets.map((m) => m.email), msg);
+}
+
+/** Notifies several users at once (one INSERT, one BCC email). */
+export async function notifyUsers(userIds: string[], msg: Message) {
+  if (userIds.length === 0) return;
+  await db.insert(schema.notifications).values(userIds.map((userId) => ({ userId, ...msg })));
+  const rows = await db.select({ email: schema.users.email }).from(schema.users).where(inArray(schema.users.id, userIds));
+  await sendMail(rows.map((r) => r.email), msg);
 }
 
 /** Notifies one user (e.g. "your assignment was graded"). */

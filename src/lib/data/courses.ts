@@ -4,6 +4,7 @@
 import "server-only";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
+import { finalizeExpiredAttempts } from "@/lib/quiz-engine";
 import { countOf, outer } from "./sql";
 
 const { courses, enrollments, users, sections, resources, files, assignments, quizzes, liveSessions, completions, attempts, submissions } =
@@ -79,7 +80,8 @@ export function courseCatalog(userId: string) {
     .orderBy(asc(courses.department), asc(courses.code));
 }
 
-export function courseParticipants(courseId: string) {
+/** Enrolled users of a course; pass `onlyUserId` to fetch one (filtered in SQL). */
+export function courseParticipants(courseId: string, onlyUserId?: string) {
   return db
     .select({
       id: users.id,
@@ -93,7 +95,7 @@ export function courseParticipants(courseId: string) {
     })
     .from(enrollments)
     .innerJoin(users, eq(users.id, enrollments.userId))
-    .where(eq(enrollments.courseId, courseId))
+    .where(and(eq(enrollments.courseId, courseId), onlyUserId ? eq(enrollments.userId, onlyUserId) : undefined))
     .orderBy(asc(users.name));
 }
 
@@ -112,6 +114,7 @@ export type OutlineSection = { id: string | null; title: string; summary: string
 
 /** Course page structure. Pass `studentId` to include that student's completion state. */
 export async function courseOutline(courseId: string, studentId?: string): Promise<OutlineSection[]> {
+  if (studentId) await finalizeExpiredAttempts({ studentId });
   const [secs, res, asg, qz, live] = await Promise.all([
     db.select().from(sections).where(eq(sections.courseId, courseId)).orderBy(asc(sections.position)),
     db

@@ -48,10 +48,10 @@ export default async function InstructorCoursePage({ params }: PageProps<"/instr
         breadcrumbs={[{ label: "My courses", href: "/instructor/courses" }, { label: course.code }]}
         actions={
           <>
-            <Link href={`/instructor/courses/${course.id}/assignments/new`} className="flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-900 shadow-sm transition hover:bg-white/90">
+            <Link href={`/instructor/courses/${course.id}/assignments/new`} className={buttonClass()}>
               <NotebookPen className="size-4" /> New assignment
             </Link>
-            <Link href={`/instructor/courses/${course.id}/quizzes/new`} className="flex items-center gap-2 rounded-xl bg-white/15 px-4 py-2 text-sm font-medium text-white backdrop-blur transition hover:bg-white/25">
+            <Link href={`/instructor/courses/${course.id}/quizzes/new`} className={buttonClass("secondary")}>
               <ClipboardList className="size-4" /> New quiz
             </Link>
           </>

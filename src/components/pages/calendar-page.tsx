@@ -4,8 +4,7 @@ import { buttonClass, Card, cx, PageHeader } from "@/components/ui";
 import { requireUser, type Role } from "@/lib/auth/dal";
 import { coverFor } from "@/lib/course-colors";
 import { calendarEvents, type CalendarEvent } from "@/lib/data/activity";
-import { listInstructorCourses } from "@/lib/data/courses";
-import { enrolledCourseIds } from "@/lib/data/shared";
+import { taughtCourseIds, visibleCourseIds } from "@/lib/data/shared";
 import { formatTime, requestTime } from "@/lib/format";
 
 const ICON = { assignment: FileText, quiz: ClipboardList, live: Video };
@@ -25,7 +24,7 @@ export async function CalendarPage({ role, searchParams }: { role: Exclude<Role,
   gridStart.setUTCDate(1 - ((first.getUTCDay() + 6) % 7)); // weeks start on Monday
   const days = Array.from({ length: 42 }, (_, i) => new Date(gridStart.getTime() + i * 86_400_000));
 
-  const courseIds = role === "student" ? await enrolledCourseIds(user.id) : (await listInstructorCourses(user.id)).map((c) => c.id);
+  const courseIds = role === "student" ? await visibleCourseIds(user.id) : await taughtCourseIds(user.id);
   const events = await calendarEvents(courseIds, new Date(gridStart.getTime() - 86_400_000), new Date(gridStart.getTime() + 43 * 86_400_000), role === "student" ? user.id : undefined);
   const byDay = new Map<string, CalendarEvent[]>();
   for (const e of events) byDay.set(dayKey(e.at), [...(byDay.get(dayKey(e.at)) ?? []), e]);

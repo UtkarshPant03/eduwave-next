@@ -1,10 +1,10 @@
-import { getCurrentUser } from "@/lib/auth/dal";
+import { getActiveUser } from "@/lib/auth/dal";
 import { listAllCourses } from "@/lib/data/admin";
 import { listInstructorCourses, listStudentCourses } from "@/lib/data/courses";
 
 /** Courses for the command palette, scoped to what the user can open. */
 export async function GET() {
-  const user = await getCurrentUser();
+  const user = await getActiveUser();
   if (!user) return Response.json({ courses: [] }, { status: 401 });
   const rows =
     user.role === "student"

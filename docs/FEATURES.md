@@ -327,6 +327,7 @@ Add a row whenever a feature's status changes. Newest first.
 
 | Date | Version | Change | Feature IDs |
 |---|---|---|---|
+| 2026-11-27 | 4.0 | Production hardening: audit, security fixes, database-enforced integrity, transactional quizzes and grading, grade history, production configuration checks, institutional redesign, CI (see docs/CHANGELOG.md) | ADM-12, UI-05, UI-10 |
 | 2026-11-27 | 3.2 | Verified backup & restore scripts; accessibility scan in light/dark with all WCAG 2.1 A/AA violations fixed (contrast, accessible names, nested controls) | ADM-12, UI-05 |
 | 2026-11-27 | 3.1 | Stability pass: edit assignments and quizzes, graded work protected from deletion, error and not-found pages, malformed URL IDs handled, AI hidden while not configured, expired-session cleanup, stability test suite | ASG-12..13, QZ-14, UI-10 |
 | 2026-11-27 | 3.0 | University LMS: admin console, courses & enrolment, sections, assignments, gradebook, discussions, calendar, catalogue, profiles, command palette, redesigned UI | AUTH-05..11, ADM-01..09, CRS-01..10, ASG-01..08, GRD-01..05, COM-01..06, SCH-01..02, TOOL-05, UI-01..07 |

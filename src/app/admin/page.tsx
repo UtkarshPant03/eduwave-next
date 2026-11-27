@@ -13,22 +13,21 @@ export default async function AdminHome() {
   const user = await requireAdmin();
   const [stats, audit] = await Promise.all([siteStats(), siteAudit(12)]);
   const now = requestTime();
-  const failures = audit.filter((a) => a.action === "login_failed" || a.action === "login_locked").length;
 
   return (
     <>
       <PageHeader eyebrow={greeting(now)} title={`Administration · ${user.name}`} subtitle="Users, courses and security across the institution." />
       <div className="stagger mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatTile label="Students" value={stats.byRole.student ?? 0} icon={<GraduationCap />} />
-        <StatTile label="Instructors" value={stats.byRole.instructor ?? 0} icon={<UserCheck />} tone="success" />
-        <StatTile label="Courses" value={stats.courses} icon={<BookOpen />} tone="neutral" hint={`${stats.enrollments} enrolments`} />
-        <StatTile label="Submissions" value={stats.submissions} icon={<Inbox />} tone="neutral" hint="assignments + quizzes" />
+        <StatTile label="Active students" value={stats.students} icon={<GraduationCap />} />
+        <StatTile label="Active instructors" value={stats.instructors} icon={<UserCheck />} />
+        <StatTile label="Courses" value={stats.courses} icon={<BookOpen />} hint={`${stats.published} published · ${stats.enrollments} enrolments`} />
+        <StatTile label="Submitted work" value={stats.submissions + stats.quizAttempts} icon={<Inbox />} hint={`${stats.submissions} assignments · ${stats.quizAttempts} quizzes`} />
       </div>
       <div className="grid gap-6 xl:grid-cols-[1fr_20rem] [&>*]:min-w-0">
         <Card
           title="Recent security events"
           icon={<ShieldAlert />}
-          description={failures ? `${failures} failed sign-in event(s) in this list.` : "No recent failed sign-ins."}
+          description={stats.failedSignIns24h ? `${stats.failedSignIns24h} failed sign-in event(s) in the last 24 hours.` : "No failed sign-ins in the last 24 hours."}
           action={<Link href="/admin/audit" className="flex items-center gap-1 text-sm text-accent hover:underline">Full log <ArrowRight className="size-3.5" /></Link>}
         >
           <Table head={["Event", "User", "When", "IP"]}>

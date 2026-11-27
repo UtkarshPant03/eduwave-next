@@ -71,11 +71,21 @@ export async function reply(_: FormState, formData: FormData): Promise<FormState
   return { success: "Reply posted." };
 }
 
+// Only these two flags may change. `.strict()` rejects any other key: Server Action
+// arguments are client-controlled, and TypeScript types are not checked at runtime.
+const moderationInput = z.object({ pinned: z.boolean().optional(), locked: z.boolean().optional() }).strict();
+
 /** Instructor moderation: pin / lock. */
-export async function moderateThread(threadId: string, change: { pinned?: boolean; locked?: boolean }) {
+export async function moderateThread(threadId: string, change: z.input<typeof moderationInput>) {
+  const parsed = moderationInput.safeParse(change);
+  if (!parsed.success) return;
   const { thread, manager } = await threadFor(threadId);
   if (!manager) return;
-  await db.update(schema.threads).set(change).where(eq(schema.threads.id, thread.id));
+  // Explicit columns only: never spread client input into an UPDATE.
+  await db
+    .update(schema.threads)
+    .set({ pinned: parsed.data.pinned ?? thread.pinned, locked: parsed.data.locked ?? thread.locked })
+    .where(eq(schema.threads.id, thread.id));
   refresh();
 }
 

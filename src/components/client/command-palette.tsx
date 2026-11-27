@@ -63,7 +63,7 @@ export function CommandPalette({ links }: { links: NavItem[] }) {
   if (!open) return null;
   return createPortal(
     <div className="fixed inset-0 z-[60] flex items-start justify-center p-4 pt-[12vh]" role="dialog" aria-modal="true" aria-label="Command palette">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-fade-in" onClick={() => setOpen(false)} />
+      <div className="absolute inset-0 bg-black/40" onClick={() => setOpen(false)} />
       <div className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-surface shadow-card-lg animate-pop">
         <div className="flex items-center gap-3 border-b border-border px-4">
           <Search className="size-4 text-muted" />

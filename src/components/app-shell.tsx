@@ -21,7 +21,7 @@ export function AppShell({ role, links, children }: { role: keyof typeof ROLE_LA
   const home = `/${role}`;
   const logoutForm = (
     <form action={logout}>
-      <button className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted hover:bg-surface-2 hover:text-foreground">
+      <button className="flex min-h-9 w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted hover:bg-surface-2 hover:text-foreground">
         <LogOut className="size-4" /> Sign out
       </button>
     </form>
@@ -29,7 +29,7 @@ export function AppShell({ role, links, children }: { role: keyof typeof ROLE_LA
 
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[16rem_1fr]">
-      <aside className="sticky top-0 hidden h-screen flex-col gap-6 border-r border-border bg-surface/70 px-3 py-5 backdrop-blur lg:flex">
+      <aside className="sticky top-0 hidden h-screen flex-col gap-6 border-r border-border bg-surface px-3 py-5 lg:flex">
         <div className="px-2">
           <Logo href={home} subtitle={ROLE_LABEL[role]} />
         </div>
@@ -38,14 +38,10 @@ export function AppShell({ role, links, children }: { role: keyof typeof ROLE_LA
             <ActiveNav links={links} />
           </Suspense>
         </nav>
-        <div className="rounded-2xl border border-border bg-surface-2/60 p-3 text-xs text-muted">
-          <p className="font-medium text-foreground">Tip</p>
-          Press <kbd className="rounded border border-border bg-surface px-1">Ctrl</kbd> + <kbd className="rounded border border-border bg-surface px-1">K</kbd> to jump anywhere.
-        </div>
       </aside>
 
       <div className="flex min-w-0 flex-col">
-        <header className="sticky top-0 z-40 flex items-center gap-2 border-b border-border bg-surface/80 px-4 py-2.5 backdrop-blur-md sm:px-6">
+        <header className="sticky top-0 z-40 flex items-center gap-2 border-b border-border bg-surface px-4 py-2.5 sm:px-6">
           <Suspense fallback={<span className="size-9 lg:hidden" />}>
             <MobileNav links={links} header={<Logo href={home} />} footer={logoutForm} />
           </Suspense>
@@ -64,9 +60,6 @@ export function AppShell({ role, links, children }: { role: keyof typeof ROLE_LA
         <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6 lg:px-8">
           <Suspense fallback={<PageSkeleton />}>{children}</Suspense>
         </main>
-        <footer className="border-t border-border px-6 py-4 text-center text-xs text-muted">
-          eduWave Learning Management System · Built with open-source software
-        </footer>
       </div>
       <CommandPalette links={links} />
     </div>

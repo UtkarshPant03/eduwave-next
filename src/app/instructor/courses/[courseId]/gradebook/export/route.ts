@@ -1,12 +1,12 @@
 import { courseForInstructor } from "@/lib/access";
-import { getCurrentUser } from "@/lib/auth/dal";
+import { getActiveUser } from "@/lib/auth/dal";
 import { csvResponse } from "@/lib/csv";
 import { gradebook } from "@/lib/data/gradebook";
 import { routeIds } from "@/lib/route-ids";
 
 /** Gradebook as CSV (one row per student, one column per graded item). */
 export async function GET(_: Request, ctx: RouteContext<"/instructor/courses/[courseId]/gradebook/export">) {
-  const user = await getCurrentUser();
+  const user = await getActiveUser();
   if (!user || user.role !== "instructor") return new Response("Unauthorized", { status: 401 });
   const { courseId } = routeIds(await ctx.params);
   const course = await courseForInstructor(user, courseId);

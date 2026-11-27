@@ -136,7 +136,7 @@ export function QuizBuilder({
       )}
 
       {aiAvailable && !locked && (
-        <div className="bg-mesh flex flex-wrap items-center gap-3 rounded-2xl border border-accent/30 p-4 text-sm">
+        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-accent/30 p-4 text-sm">
           <Sparkles className="size-5 text-accent" />
           <span className="flex-1">Paste lecture notes or a textbook passage and let the on-campus AI draft questions for you to review.</span>
           <Button type="button" variant="secondary" onClick={() => setAiOpen(true)}>Draft with AI</Button>
@@ -185,7 +185,7 @@ export function QuizBuilder({
         </Card>
       ))}
 
-      <div className="sticky bottom-0 z-10 -mx-4 flex flex-wrap items-center gap-3 border-t border-border bg-background/90 px-4 py-3 backdrop-blur">
+      <div className="sticky bottom-0 z-10 -mx-4 flex flex-wrap items-center gap-3 border-t border-border bg-background/90 px-4 py-3">
         {!locked && <Button type="button" variant="secondary" onClick={() => setQuestions((qs) => [...qs, blankQuestion()])}><Plus className="size-4" /> Add question</Button>}
         <Button type="submit" disabled={pending}>
           {initial ? (pending ? "Saving…" : "Save changes") : pending ? "Publishing…" : `Publish quiz (${questions.length} question${questions.length === 1 ? "" : "s"})`}

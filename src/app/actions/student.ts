@@ -11,7 +11,7 @@ import { rateLimit } from "@/lib/auth/throttle";
 import { firstIssue, type FormState } from "@/lib/form";
 import { assignmentWindow } from "@/lib/grading";
 import { notifyUser } from "@/lib/notify";
-import { buildLayout, finalizeAttempt, isAttemptOpen } from "@/lib/quiz-engine";
+import { attemptEndsAt, buildLayout, finalizeAttempt, isAttemptOpen } from "@/lib/quiz-engine";
 import { checkUpload } from "@/lib/uploads";
 
 const uuid = z.uuid();
@@ -75,33 +75,51 @@ export async function submitAssignment(_: FormState, formData: FormData): Promis
 
   const window = assignmentWindow(assignment, Date.now());
   if (!window.open) return { error: "Submissions for this assignment are closed." };
-  const existing = await db.query.submissions.findFirst({
-    where: (s, { and, eq }) => and(eq(s.assignmentId, assignment.id), eq(s.studentId, user.id)),
-  });
-  if (existing?.grade != null) return { error: "This submission has already been graded and can't be changed." };
 
+  // Validate the upload BEFORE the transaction: reading a file shouldn't hold row locks.
   const file = formData.get("file");
-  let fileId = existing?.fileId ?? null;
+  let upload: Awaited<ReturnType<typeof checkUpload>> | null = null;
   if (file instanceof File && file.size > 0) {
-    const checked = await checkUpload(file);
-    if ("error" in checked) return { error: checked.error };
-    const [f] = await db
-      .insert(schema.files)
-      .values({ courseId: course.id, uploaderId: user.id, size: checked.data.length, ...checked })
-      .returning({ id: schema.files.id });
-    if (existing?.fileId) await db.delete(schema.files).where(eq(schema.files.id, existing.fileId));
-    fileId = f.id;
+    upload = await checkUpload(file);
+    if ("error" in upload) return { error: upload.error };
   }
   const text = parsed.data.text || null;
-  if (!text && !fileId) return { error: "Add some text or attach a file." };
 
-  await db
-    .insert(schema.submissions)
-    .values({ assignmentId: assignment.id, studentId: user.id, text, fileId })
-    .onConflictDoUpdate({
-      target: [schema.submissions.assignmentId, schema.submissions.studentId],
-      set: { text, fileId, submittedAt: sql`now()` },
-    });
+  const result = await db.transaction(async (tx) => {
+    // Lock this student's submission (if any): an instructor grading at the same moment
+    // waits for us, and we can't overwrite work that was graded after we looked.
+    const [existing] = await tx
+      .select({ id: schema.submissions.id, grade: schema.submissions.grade, fileId: schema.submissions.fileId })
+      .from(schema.submissions)
+      .where(and(eq(schema.submissions.assignmentId, assignment.id), eq(schema.submissions.studentId, user.id)))
+      .for("update");
+    if (existing?.grade != null) return { error: "This submission has already been graded and can't be changed." };
+
+    let fileId = existing?.fileId ?? null;
+    if (upload && !("error" in upload)) {
+      const [f] = await tx
+        .insert(schema.files)
+        .values({ courseId: course.id, uploaderId: user.id, size: upload.data.length, ...upload })
+        .returning({ id: schema.files.id });
+      fileId = f.id;
+    }
+    if (!text && !fileId) return { error: "Add some text or attach a file." };
+
+    await tx
+      .insert(schema.submissions)
+      .values({ assignmentId: assignment.id, studentId: user.id, text, fileId })
+      .onConflictDoUpdate({
+        target: [schema.submissions.assignmentId, schema.submissions.studentId],
+        set: { text, fileId, submittedAt: sql`now()` },
+        // Belt and braces: never touch a graded submission.
+        setWhere: sql`${schema.submissions.grade} is null`,
+      });
+    // Remove the replaced file only after the new one is safely referenced.
+    if (existing?.fileId && existing.fileId !== fileId) await tx.delete(schema.files).where(eq(schema.files.id, existing.fileId));
+    return { first: !existing };
+  });
+  if ("error" in result) return { error: result.error };
+  const existing = !result.first;
 
   if (!existing) {
     await notifyUser(course.instructorId, {
@@ -129,13 +147,22 @@ export async function startAttempt(formData: FormData) {
   const found = await quizForStudent(uuid.parse(formData.get("quizId")));
   if (!found || found.quiz.deadline.getTime() <= Date.now()) return;
   const { user, quiz } = found;
-  const qs = await db.query.questions.findMany({ where: (q, { eq }) => eq(q.quizId, quiz.id), columns: { id: true, options: true } });
-  // The unique (quiz, student) constraint makes a second attempt impossible, even if two
-  // requests race. The layout fixes this student's shuffled order.
-  await db
-    .insert(schema.attempts)
-    .values({ quizId: quiz.id, studentId: user.id, total: qs.length, layout: buildLayout(qs, quiz.shuffle) })
-    .onConflictDoNothing();
+  await db.transaction(async (tx) => {
+    // Shared lock on the quiz: an instructor's updateQuiz (which takes FOR UPDATE) can't
+    // swap the questions between our reading them and creating the attempt.
+    await tx.select({ id: schema.quizzes.id }).from(schema.quizzes).where(eq(schema.quizzes.id, quiz.id)).for("share");
+    const qs = await tx
+      .select({ id: schema.questions.id, options: schema.questions.options })
+      .from(schema.questions)
+      .where(eq(schema.questions.quizId, quiz.id));
+    if (qs.length === 0) return;
+    // The unique (quiz, student) constraint makes a second attempt impossible, even if two
+    // requests race. The layout fixes this student's shuffled order.
+    await tx
+      .insert(schema.attempts)
+      .values({ quizId: quiz.id, studentId: user.id, total: qs.length, layout: buildLayout(qs, quiz.shuffle) })
+      .onConflictDoNothing();
+  });
   refresh();
 }
 
@@ -157,18 +184,30 @@ export async function saveAnswer(input: z.input<typeof answerInput>): Promise<Sa
   if (!found) return { ok: false, reason: "invalid" };
   const { user, quiz } = found;
 
-  const attempt = await db.query.attempts.findFirst({ where: (a, { and, eq }) => and(eq(a.quizId, quizId), eq(a.studentId, user.id)) });
-  if (!attempt || attempt.submittedAt || !isAttemptOpen(attempt, quiz)) return { ok: false, reason: "closed" };
+  // Check and write in ONE transaction, holding a lock on the attempt: finalisation takes
+  // the same lock, so an answer can never be stored after the attempt has been scored.
+  return db.transaction(async (tx): Promise<SaveAnswerResult> => {
+    const [attempt] = await tx
+      .select()
+      .from(schema.attempts)
+      .where(and(eq(schema.attempts.quizId, quizId), eq(schema.attempts.studentId, user.id)))
+      .for("update");
+    if (!attempt || attempt.submittedAt || !isAttemptOpen(attempt, quiz)) return { ok: false, reason: "closed" };
 
-  const question = await db.query.questions.findFirst({ where: (q, { and, eq }) => and(eq(q.id, questionId), eq(q.quizId, quizId)) });
-  if (!question || displayIndex >= question.options.length) return { ok: false, reason: "invalid" };
-  const selectedIndex = attempt.layout?.optionOrders[questionId]?.[displayIndex] ?? displayIndex;
+    const [question] = await tx
+      .select({ options: schema.questions.options })
+      .from(schema.questions)
+      .where(and(eq(schema.questions.id, questionId), eq(schema.questions.quizId, quizId)));
+    if (!question || displayIndex >= question.options.length) return { ok: false, reason: "invalid" };
+    const selectedIndex = attempt.layout?.optionOrders[questionId]?.[displayIndex] ?? displayIndex;
+    if (selectedIndex < 0 || selectedIndex >= question.options.length) return { ok: false, reason: "invalid" };
 
-  await db
-    .insert(schema.answers)
-    .values({ attemptId: attempt.id, questionId, selectedIndex })
-    .onConflictDoUpdate({ target: [schema.answers.attemptId, schema.answers.questionId], set: { selectedIndex } });
-  return { ok: true };
+    await tx
+      .insert(schema.answers)
+      .values({ attemptId: attempt.id, quizId, questionId, selectedIndex })
+      .onConflictDoUpdate({ target: [schema.answers.attemptId, schema.answers.questionId], set: { selectedIndex } });
+    return { ok: true };
+  });
 }
 
 /** Submit early, or called by the client timer at zero. Grading happens server-side. */
@@ -178,6 +217,8 @@ export async function submitAttempt(quizId: string) {
   const attempt = await db.query.attempts.findFirst({
     where: (a, { and, eq }) => and(eq(a.quizId, found.quiz.id), eq(a.studentId, found.user.id)),
   });
-  if (attempt) await finalizeAttempt(attempt.id);
+  // Never record a finish time later than the attempt's real end (the client may call
+  // this a moment after the timer hits zero).
+  if (attempt) await finalizeAttempt(attempt.id, new Date(Math.min(Date.now(), attemptEndsAt(attempt, found.quiz).getTime())));
   refresh();
 }

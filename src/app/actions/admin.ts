@@ -10,6 +10,7 @@ import { audit } from "@/lib/audit";
 import { requireAdmin } from "@/lib/auth/dal";
 import { generateTempPassword, hashPassword } from "@/lib/auth/password";
 import { revokeAllSessions } from "@/lib/auth/session";
+import { clearFailures } from "@/lib/auth/throttle";
 import { COURSE_COLORS } from "@/lib/course-colors";
 import { firstIssue, type FormState } from "@/lib/form";
 
@@ -111,18 +112,21 @@ export async function resetUserPassword(userId: string): Promise<{ password?: st
     .returning({ email: schema.users.email });
   if (!updated.length) return { error: "User not found." };
   await revokeAllSessions(id);
-  await audit(id, "password_reset", `by admin ${admin.email}`);
+  // A reset is also how an administrator unlocks an account that was locked out.
+  await clearFailures("account", id);
+  await audit(id, "password_reset", undefined, admin.id);
   return { password };
 }
 
-export async function setUserActive(userId: string, active: boolean) {
+export async function setUserActive(userId: string, isActive: boolean) {
   const admin = await requireAdmin();
   const id = z.uuid().parse(userId);
+  const active = z.boolean().parse(isActive);
   if (id === admin.id) return { error: "You can't deactivate your own account." };
   await db.update(schema.users).set({ active }).where(eq(schema.users.id, id));
   // Deactivation must take effect immediately, not when the session expires.
   if (!active) await revokeAllSessions(id);
-  await audit(id, active ? "user_reactivated" : "user_deactivated", `by admin ${admin.email}`);
+  await audit(id, active ? "user_reactivated" : "user_deactivated", undefined, admin.id);
   refresh();
   return {};
 }
@@ -164,8 +168,14 @@ export async function createCourse(_: FormState, formData: FormData): Promise<Fo
   redirect(`/admin/courses`);
 }
 
-export async function setCoursePublished(courseId: string, published: boolean) {
-  await requireAdmin();
-  await db.update(schema.courses).set({ published }).where(eq(schema.courses.id, z.uuid().parse(courseId)));
+export async function setCoursePublished(courseId: string, isPublished: boolean) {
+  const admin = await requireAdmin();
+  const published = z.boolean().parse(isPublished);
+  const [course] = await db
+    .update(schema.courses)
+    .set({ published })
+    .where(eq(schema.courses.id, z.uuid().parse(courseId)))
+    .returning({ code: schema.courses.code, term: schema.courses.term });
+  if (course) await audit(admin.id, published ? "course_published" : "course_hidden", `${course.code} ${course.term}`);
   refresh();
 }

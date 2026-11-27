@@ -13,8 +13,10 @@ import { rateLimit } from "@/lib/auth/throttle";
 import { COURSE_COLORS } from "@/lib/course-colors";
 import { firstIssue, type FormState } from "@/lib/form";
 import { formatDateTime } from "@/lib/format";
-import { notifyCourse, notifyUser } from "@/lib/notify";
+import { audit } from "@/lib/audit";
+import { notifyCourse, notifyUser, notifyUsers } from "@/lib/notify";
 import { checkUpload } from "@/lib/uploads";
+import { isForeignKeyViolation } from "@/lib/db-errors";
 
 const uuid = z.uuid();
 const isoDate = (msg: string) => z.iso.datetime({ message: msg }).transform((s) => new Date(s));
@@ -120,7 +122,7 @@ export type EnrolResult = { added: string[]; already: string[]; notFound: string
 
 /** Enrols students by email or student ID (one per line / comma separated). */
 export async function enrolStudents(courseId: string, list: string): Promise<EnrolResult> {
-  const { course } = await ownCourse(courseId);
+  const { user, course } = await ownCourse(courseId);
   const ids = [...new Set(list.split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean))].slice(0, 500);
   const emails = ids.filter((s) => s.includes("@")).map((s) => s.toLowerCase());
   const sids = ids.filter((s) => !s.includes("@")).map((s) => s.toUpperCase());
@@ -134,26 +136,42 @@ export async function enrolStudents(courseId: string, list: string): Promise<Enr
       ),
     );
   const result: EnrolResult = { added: [], already: [], notFound: [] };
+  const byKey = new Map<string, string>(); // typed identifier -> user id
   for (const raw of ids) {
     const key = raw.includes("@") ? raw.toLowerCase() : raw.toUpperCase();
     const u = found.find((f) => f.email === key || f.studentId === key);
-    if (!u) {
-      result.notFound.push(raw);
-      continue;
-    }
-    const ins = await db.insert(schema.enrollments).values({ courseId: course.id, userId: u.id }).onConflictDoNothing().returning();
-    if (ins.length) {
-      result.added.push(raw);
-      await notifyUser(u.id, { title: `You've been enrolled in ${course.code}`, body: course.title, link: `/student/courses/${course.id}` });
-    } else result.already.push(raw);
+    if (u) byKey.set(raw, u.id);
+    else result.notFound.push(raw);
+  }
+  const userIds = [...new Set(byKey.values())];
+  // One INSERT for the whole list (not one round trip per student).
+  const inserted = userIds.length
+    ? await db
+        .insert(schema.enrollments)
+        .values(userIds.map((id) => ({ courseId: course.id, userId: id })))
+        .onConflictDoNothing()
+        .returning({ userId: schema.enrollments.userId })
+    : [];
+  const added = new Set(inserted.map((r) => r.userId));
+  for (const [raw, id] of byKey) (added.has(id) ? result.added : result.already).push(raw);
+
+  if (added.size) {
+    await notifyUsers([...added], { title: `You've been enrolled in ${course.code}`, body: course.title, link: `/student/courses/${course.id}` });
+    await audit(user.id, "enrolment_added", `${course.code} ${course.term}: ${added.size} student(s)`);
   }
   refresh();
   return result;
 }
 
 export async function unenrolStudent(courseId: string, userId: string) {
-  const { course } = await ownCourse(courseId);
-  await db.delete(schema.enrollments).where(and(eq(schema.enrollments.courseId, course.id), eq(schema.enrollments.userId, uuid.parse(userId))));
+  const { user, course } = await ownCourse(courseId);
+  const studentId = uuid.parse(userId);
+  // Their submissions and attempts are kept (and come back if they are re-enrolled).
+  const removed = await db
+    .delete(schema.enrollments)
+    .where(and(eq(schema.enrollments.courseId, course.id), eq(schema.enrollments.userId, studentId)))
+    .returning();
+  if (removed.length) await audit(studentId, "enrolment_removed", `${course.code} ${course.term}`, user.id);
   refresh();
 }
 
@@ -214,29 +232,48 @@ const DELETABLE = {
  * here on the server, not just in the confirm() dialog, so no client can bypass it.
  */
 export async function deleteActivity(courseId: string, kind: keyof typeof DELETABLE, id: string): Promise<{ error?: string }> {
-  const { course } = await ownCourse(courseId);
+  const { user, course } = await ownCourse(courseId);
   const table = DELETABLE[kind];
   if (!table) return { error: "Unknown activity type." };
   const activityId = uuid.parse(id);
 
-  const studentWork =
-    kind === "assignment"
-      ? await db.$count(schema.submissions, eq(schema.submissions.assignmentId, activityId))
-      : kind === "quiz"
-        ? await db.$count(schema.attempts, eq(schema.attempts.quizId, activityId))
-        : 0;
-  if (studentWork > 0) {
-    const what = kind === "assignment" ? "submitted work" : "attempted it";
-    return {
-      error: `${studentWork} student${studentWork === 1 ? " has" : "s have"} ${what}, so it can't be deleted: that would erase their grades. You can still edit it, for example to change its deadline.`,
-    };
-  }
+  try {
+    const error = await db.transaction(async (tx) => {
+      // 1. The activity must belong to THIS course (checked before anything else, so no
+      //    information about other courses' activities can leak). Locking the row means a
+      //    student can't start/submit between the count below and the delete.
+      const [own] = await tx
+        .select({ id: table.id })
+        .from(table)
+        .where(and(eq(table.id, activityId), eq(table.courseId, course.id)))
+        .for("update");
+      if (!own) return "This activity no longer exists.";
 
-  const [row] = await db
-    .delete(table)
-    .where(and(eq(table.id, activityId), eq(table.courseId, course.id)))
-    .returning();
-  if (kind === "resource" && row && "fileId" in row && row.fileId) await db.delete(schema.files).where(eq(schema.files.id, row.fileId));
+      // 2. Never delete student work: refuse if anyone has submitted or attempted it.
+      const studentWork =
+        kind === "assignment"
+          ? await tx.$count(schema.submissions, eq(schema.submissions.assignmentId, activityId))
+          : kind === "quiz"
+            ? await tx.$count(schema.attempts, eq(schema.attempts.quizId, activityId))
+            : 0;
+      if (studentWork > 0) {
+        const what = kind === "assignment" ? "submitted work" : "attempted it";
+        return `${studentWork} student${studentWork === 1 ? " has" : "s have"} ${what}, so it can't be deleted: that would erase their grades. You can still edit it, for example to change its deadline.`;
+      }
+
+      const [row] = await tx.delete(table).where(eq(table.id, activityId)).returning();
+      // Completion ticks have no foreign key (they can point at resources or live classes).
+      await tx.delete(schema.completions).where(eq(schema.completions.itemId, activityId));
+      if (kind === "resource" && row && "fileId" in row && row.fileId) await tx.delete(schema.files).where(eq(schema.files.id, row.fileId));
+      return null;
+    });
+    if (error) return { error };
+  } catch (err) {
+    // Backstop: the database itself refuses (ON DELETE RESTRICT) to delete graded work.
+    if (isForeignKeyViolation(err)) return { error: "Students have work in this activity, so it can't be deleted." };
+    throw err;
+  }
+  await audit(user.id, "activity_deleted", `${course.code} ${course.term}: ${kind} ${activityId}`);
   refresh();
   return {};
 }
@@ -312,6 +349,9 @@ const gradeInput = z.object({
   submissionId: uuid,
   grade: z.coerce.number().int("Whole points only.").min(0, "Grade can't be negative."),
   feedback: z.string().trim().max(5000).optional(),
+  // The submission time the grader was looking at (optimistic concurrency): if the student
+  // resubmitted since, the grade must not silently apply to a version nobody has read.
+  version: z.iso.datetime().optional(),
 });
 
 export async function gradeSubmission(_: FormState, formData: FormData): Promise<FormState> {
@@ -325,15 +365,47 @@ export async function gradeSubmission(_: FormState, formData: FormData): Promise
     .where(eq(schema.submissions.id, parsed.data.submissionId));
   if (!row) return { error: "Submission not found." };
   const course = await courseForInstructor(user, row.a.courseId);
-  if (parsed.data.grade > row.a.maxPoints) return { error: `Maximum is ${row.a.maxPoints} points.` };
+  const { grade } = parsed.data;
+  const feedback = parsed.data.feedback || null;
 
-  await db
-    .update(schema.submissions)
-    .set({ grade: parsed.data.grade, feedback: parsed.data.feedback || null, gradedAt: sql`now()` })
-    .where(eq(schema.submissions.id, row.s.id));
+  const error = await db.transaction(async (tx) => {
+    // Lock the submission AND its assignment: no resubmission, and no change to the
+    // maximum points, can slip in between these checks and the update.
+    const [current] = await tx
+      .select({ grade: schema.submissions.grade, feedback: schema.submissions.feedback, submittedAt: schema.submissions.submittedAt })
+      .from(schema.submissions)
+      .where(eq(schema.submissions.id, row.s.id))
+      .for("update");
+    const [assignment] = await tx
+      .select({ maxPoints: schema.assignments.maxPoints })
+      .from(schema.assignments)
+      .where(eq(schema.assignments.id, row.a.id))
+      .for("share");
+    if (!current || !assignment) return "Submission not found.";
+    if (grade > assignment.maxPoints) return `Maximum is ${assignment.maxPoints} points.`;
+    if (parsed.data.version && new Date(parsed.data.version).getTime() !== current.submittedAt.getTime())
+      return "The student resubmitted while you were grading. Reload to see the latest version.";
+    if (current.grade === grade && current.feedback === feedback) return null; // nothing changed
+
+    await tx
+      .update(schema.submissions)
+      .set({ grade, feedback, gradedAt: sql`now()`, gradedBy: user.id })
+      .where(eq(schema.submissions.id, row.s.id));
+    // Permanent history of every grade change, in the same transaction as the change.
+    await tx.insert(schema.gradeEvents).values({
+      submissionId: row.s.id,
+      graderId: user.id,
+      oldGrade: current.grade,
+      newGrade: grade,
+      feedbackChanged: current.feedback !== feedback,
+    });
+    return null;
+  });
+  if (error) return { error };
+
   await notifyUser(row.s.studentId, {
     title: `${course.code}: "${row.a.title}" graded`,
-    body: `${parsed.data.grade} / ${row.a.maxPoints}`,
+    body: `${grade} / ${row.a.maxPoints}`,
     link: `/student/assignments/${row.a.id}`,
   });
   refresh();
@@ -423,6 +495,9 @@ export async function updateQuiz(draft: z.input<typeof quizUpdate>): Promise<For
 
   const sectionId = await checkSection(course.id, q.sectionId);
   const result = await db.transaction(async (tx) => {
+    // Exclusive lock on the quiz: startAttempt takes a shared lock on it, so no student can
+    // start (and snapshot the old questions) while we decide and replace them.
+    await tx.select({ id: schema.quizzes.id }).from(schema.quizzes).where(eq(schema.quizzes.id, existing.id)).for("update");
     // Checked inside the transaction, right before any question is replaced.
     const started = await tx.$count(schema.attempts, eq(schema.attempts.quizId, existing.id));
     if (started > 0 && q.questions) return { error: `Questions are locked because ${started} student${started === 1 ? " has" : "s have"} started this quiz.` };

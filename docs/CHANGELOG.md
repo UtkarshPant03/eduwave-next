@@ -1,0 +1,76 @@
+# Changelog
+
+## 4.0.0: production hardening (2026-11-27)
+
+Driven by the production audit (`docs/PRODUCTION_AUDIT.md`). **Upgrading:** take a backup, then run `npm run db:migrate` (`docs/DATABASE.md`).
+
+**Breaking changes**
+- **`npm start` now runs in `production` mode by default.** It needs PostgreSQL (`DATABASE_URL`) and an https `APP_URL`, and refuses sample data. For a production build on one machine with PGlite (tests, labs), set `EDUWAVE_ENV=local`.
+- **`npm run db:seed` refuses to run in production mode.**
+- **Removed** the confetti effect and its `canvas-confetti` dependency.
+
+**Security**
+- Fixed thread-moderation mass assignment (High).
+- Unpublished courses no longer leak through the calendar, notifications or board list.
+- Trusted-proxy-aware client IP (`TRUSTED_PROXY_HOPS`).
+- One lockout budget per account; an admin password reset unlocks the account.
+- A temporary password can't be used beyond the account page.
+- The session is rotated on password change; current-password checks are rate-limited.
+- Student PDFs always download. OOXML and WebP structure is checked on upload.
+- Request-size cap on AI chat; board quota.
+- Failed sign-ins for unknown accounts no longer store what was typed.
+- Production configuration is validated at startup, and sample accounts are refused.
+
+**Data integrity (migration `0001_integrity`)**
+- **Foreign keys:** composite FKs keep sections, files and quiz answers within the same course or quiz.
+- **CHECK constraints:** grades, scores, answer indexes, points and durations stay in range.
+- **Delete protection:** `ON DELETE RESTRICT` on student work and on users with records.
+- **Triggers:**
+  - answers are frozen after scoring, and questions after the first attempt;
+  - a grade can't exceed the maximum points;
+  - the audit log and grade history are append-only.
+- **Grade history:** new `grade_events` table and `submissions.graded_by`.
+- **Audit log:** `audit_log.actor_id`, plus new events for publishing, enrolment, deletion and grades.
+- **Transactions:**
+  - quiz answers and finalisation take row locks, so they can't interleave;
+  - editing a quiz and starting it can't race;
+  - submitting and grading are locked, and a grade is refused if the student resubmitted since the grader looked;
+  - deleting an activity is transactional.
+- **Abandoned quiz attempts** are scored with their real end time.
+
+**Grading policy**
+- The letter grade follows the displayed whole-number percentage.
+- Missing work counts as 0 only after the late window closes.
+- The answer key is revealed only after the grace period.
+
+**Performance**
+- **Gradebook:** Map lookups instead of nested scans, SQL question counts, only the needed columns, and single-student filtering in SQL.
+- **Bulk enrolment:** one insert, one notification batch, one email.
+- **File downloads:** authorised on metadata before the content is read.
+- **Indexes:** missing foreign-key and hot-path indexes added, including partial indexes for unread notifications, ungraded submissions and announcements.
+- **Admin overview:** statistics come from one query.
+
+**Interface**
+- **Design system:** a restrained institutional palette (navy and blue, WCAG AA in light and dark), a tighter radius scale, flat primary buttons, neutral avatars, and course colour used only as thin strips.
+- **Removed decoration:** gradients, glows, glass panels, entrance animations, emoji and playful copy.
+- **Landing page:** the fabricated mock dashboard and an unbacked claim are gone.
+- **Dashboard numbers** now say exactly what they count: active accounts, finished work, and failed sign-ins in the last 24 hours.
+- Notifications without a link are no longer dead `#` links.
+
+**Testing and operations**
+- **New test suites:** `test:db` (19 checks, including real concurrency) and `test:security` (10 replayed attacks).
+- **CI:** GitHub Actions workflow.
+- **Backups:** PostgreSQL `pg_dump`/`pg_restore` backup verified.
+- **New docs:** `.env.production.example`, SECURITY, DATABASE, DEPLOYMENT, TESTING and ARCHITECTURE.
+
+## 3.2.0 (2026-11-27)
+- Backup and restore scripts; accessibility scan with all WCAG 2.1 A/AA violations fixed.
+
+## 3.1.0 (2026-11-27)
+- Editing of assignments and quizzes; graded work protected from deletion; error and not-found pages; stability suite.
+
+## 3.0.0 (2026-11-27)
+- University LMS: admin console, courses and enrolment, sections, assignments, gradebook, discussions, calendar.
+
+## 2.0.0 (2026-11-26) and 1.0.0
+- Uploads, live classes, whiteboards, optional AI, notifications. Next.js rebuild of the original MERN project.

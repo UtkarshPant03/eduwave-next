@@ -32,14 +32,29 @@ export async function unreadCount(userId: string) {
   return row.n;
 }
 
-export async function enrolledCourseIds(userId: string) {
-  const rows = await db.select({ id: enrollments.courseId }).from(enrollments).where(eq(enrollments.userId, userId));
+/**
+ * Courses a student can currently SEE: enrolled AND published. Everything shown to
+ * students outside a course page (calendar, boards) must use this, not raw enrolments:
+ * an instructor may be preparing a draft course that students are already enrolled in.
+ */
+export async function visibleCourseIds(userId: string) {
+  const rows = await db
+    .select({ id: enrollments.courseId })
+    .from(enrollments)
+    .innerJoin(schema.courses, eq(schema.courses.id, enrollments.courseId))
+    .where(and(eq(enrollments.userId, userId), eq(schema.courses.published, true)));
+  return rows.map((r) => r.id);
+}
+
+/** Ids of the courses an instructor teaches (cheap: no per-course statistics). */
+export async function taughtCourseIds(userId: string) {
+  const rows = await db.select({ id: schema.courses.id }).from(schema.courses).where(eq(schema.courses.instructorId, userId));
   return rows.map((r) => r.id);
 }
 
 /** Boards the user owns, plus boards shared with any course they're enrolled in. */
 export async function listBoards(user: CurrentUser) {
-  const courseIds = user.role === "student" ? await enrolledCourseIds(user.id) : [];
+  const courseIds = user.role === "student" ? await visibleCourseIds(user.id) : [];
   return db
     .select({ id: boards.id, title: boards.title, updatedAt: boards.updatedAt, ownerId: boards.ownerId, ownerName: users.name, sharedCourseId: boards.sharedCourseId })
     .from(boards)
@@ -70,14 +85,20 @@ export function listAuditLog(userId: string) {
  * additionally private: only the uploader and the course's instructor may read them.
  */
 export async function getFileForUser(user: CurrentUser, fileId: string) {
-  const file = await db.query.files.findFirst({ where: (f, { eq }) => eq(f.id, fileId) });
-  if (!file || !(await canAccessCourse(user, file.courseId))) return null;
-  if (user.role === "student" && file.uploaderId !== user.id) {
+  // Authorise on the metadata first; read the (possibly large) contents only if allowed.
+  const [meta] = await db
+    .select({ id: files.id, courseId: files.courseId, uploaderId: files.uploaderId, uploaderRole: users.role })
+    .from(files)
+    .innerJoin(users, eq(users.id, files.uploaderId))
+    .where(eq(files.id, fileId));
+  if (!meta || !(await canAccessCourse(user, meta.courseId))) return null;
+  if (user.role === "student" && meta.uploaderId !== user.id) {
     // Students may only read files that instructors attached to resources.
-    const isResource = await db.query.resources.findFirst({ where: (r, { eq }) => eq(r.fileId, fileId) });
+    const isResource = await db.query.resources.findFirst({ where: (r, { eq }) => eq(r.fileId, fileId), columns: { id: true } });
     if (!isResource) return null;
   }
-  return file;
+  const file = await db.query.files.findFirst({ where: (f, { eq }) => eq(f.id, fileId) });
+  return file ? { ...file, uploaderRole: meta.uploaderRole } : null;
 }
 
 export const fileMeta = { id: files.id, name: files.name, size: files.size, mimeType: files.mimeType };

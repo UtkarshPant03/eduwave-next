@@ -49,24 +49,36 @@ export function isAttemptOpen(attempt: AttemptTiming, quiz: QuizTiming, now = Da
   return now <= attemptEndsAt(attempt, quiz).getTime() + GRACE_MS;
 }
 
-/** Grades and closes an attempt. Does nothing if it was already submitted. */
-export async function finalizeAttempt(attemptId: string) {
-  const [{ correct }] = await db
-    .select({ correct: count() })
-    .from(schema.answers)
-    .innerJoin(schema.questions, eq(schema.answers.questionId, schema.questions.id))
-    .where(
-      and(
-        eq(schema.answers.attemptId, attemptId),
-        eq(schema.answers.selectedIndex, schema.questions.correctIndex),
-      ),
-    );
+/**
+ * Grades and closes an attempt. Does nothing if it was already submitted.
+ *
+ * Runs in a transaction holding a lock on the attempt row. saveAnswer takes the same
+ * lock, so the score is always computed from the final set of answers, and no answer
+ * can be written afterwards (a database trigger also rejects that).
+ *
+ * `endedAt` records when the attempt really ended (e.g. the timer's end for an attempt
+ * that was abandoned), instead of whenever someone happened to look at it.
+ */
+export async function finalizeAttempt(attemptId: string, endedAt?: Date) {
+  await db.transaction(async (tx) => {
+    const [attempt] = await tx
+      .select({ id: schema.attempts.id, submittedAt: schema.attempts.submittedAt })
+      .from(schema.attempts)
+      .where(eq(schema.attempts.id, attemptId))
+      .for("update");
+    if (!attempt || attempt.submittedAt) return;
 
-  // `submittedAt IS NULL` makes this safe against double-submits and races.
-  await db
-    .update(schema.attempts)
-    .set({ submittedAt: sql`now()`, score: correct })
-    .where(and(eq(schema.attempts.id, attemptId), isNull(schema.attempts.submittedAt)));
+    const [{ correct }] = await tx
+      .select({ correct: count() })
+      .from(schema.answers)
+      .innerJoin(schema.questions, eq(schema.answers.questionId, schema.questions.id))
+      .where(and(eq(schema.answers.attemptId, attemptId), eq(schema.answers.selectedIndex, schema.questions.correctIndex)));
+
+    await tx
+      .update(schema.attempts)
+      .set({ submittedAt: endedAt ?? sql`now()`, score: correct })
+      .where(and(eq(schema.attempts.id, attemptId), isNull(schema.attempts.submittedAt)));
+  });
 }
 
 /** Call before showing an attempt: closes it if the student ran out of time. */
@@ -75,8 +87,32 @@ export async function finalizeIfExpired(
   quiz: QuizTiming,
 ) {
   if (!attempt.submittedAt && !isAttemptOpen(attempt, quiz)) {
-    await finalizeAttempt(attempt.id);
+    await finalizeAttempt(attempt.id, attemptEndsAt(attempt, quiz));
     return true;
   }
   return false;
+}
+
+/**
+ * Closes every attempt in scope whose time (plus grace) has run out but which was never
+ * submitted (tab closed, connection lost). Call before reading scores: gradebook,
+ * analytics, exports, progress. Without it, an abandoned attempt shows as "missing".
+ */
+export async function finalizeExpiredAttempts(scope: { quizId: string } | { courseId: string } | { studentId: string }) {
+  const a = schema.attempts;
+  const q = schema.quizzes;
+  const inScope =
+    "quizId" in scope ? eq(a.quizId, scope.quizId) : "courseId" in scope ? eq(q.courseId, scope.courseId) : eq(a.studentId, scope.studentId);
+  const expired = await db
+    .select({ id: a.id, startedAt: a.startedAt, timeLimitMinutes: q.timeLimitMinutes, deadline: q.deadline })
+    .from(a)
+    .innerJoin(q, eq(q.id, a.quizId))
+    .where(
+      and(
+        inScope,
+        isNull(a.submittedAt),
+        sql`now() > least(${a.startedAt} + ${q.timeLimitMinutes} * interval '1 minute', ${q.deadline}) + ${`${GRACE_MS} milliseconds`}::interval`,
+      ),
+    );
+  for (const row of expired) await finalizeAttempt(row.id, attemptEndsAt(row, row));
 }

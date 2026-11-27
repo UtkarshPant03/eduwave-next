@@ -13,7 +13,10 @@
  */
 import bcrypt from "bcryptjs";
 import { randomBytes } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { db, schema } from "../src/db";
+import { deploymentMode } from "../src/lib/env";
+import { SAMPLE_PASSWORD } from "../src/lib/sample-data";
 
 const DAY = 86_400_000;
 const now = Date.now();
@@ -31,11 +34,17 @@ const STUDENTS = [
 ] as const;
 
 async function main() {
+  // Sample accounts share a password that is printed in the README: never in production.
+  if (deploymentMode() === "production") {
+    console.error("Refusing to load sample data: this is a production configuration (EDUWAVE_ENV/NODE_ENV).");
+    console.error("Sample accounts use a published password. Use `npm run create-admin` for a real installation.");
+    process.exit(1);
+  }
   if (await db.query.users.findFirst({ where: (u, { eq }) => eq(u.email, "admin@eduwave.edu") })) {
     console.log("Seed data already present, skipping.");
     return;
   }
-  const hash = await bcrypt.hash("eduwave2026", 12);
+  const hash = await bcrypt.hash(SAMPLE_PASSWORD, 12);
 
   await db.transaction(async (tx) => {
     const u = schema.users;
@@ -157,11 +166,13 @@ async function main() {
       const picks = q1qs.map((q, k) => ((i + k) % 5 === 0 ? (q.correctIndex + 1) % q.options.length : q.correctIndex));
       const score = picks.filter((p, k) => p === q1qs[k].correctIndex).length;
       const started = new Date(q1.deadline.getTime() - 3 * DAY);
-      const [att] = await tx
-        .insert(schema.attempts)
-        .values({ quizId: q1.id, studentId: s.id, startedAt: started, submittedAt: new Date(started.getTime() + (6 + i) * 60_000), score, total: q1qs.length })
-        .returning();
-      await tx.insert(schema.answers).values(q1qs.map((q, k) => ({ attemptId: att.id, questionId: q.id, selectedIndex: picks[k] })));
+      // Same order as a real attempt: start, answer, then finish (answers are frozen after that).
+      const [att] = await tx.insert(schema.attempts).values({ quizId: q1.id, studentId: s.id, startedAt: started, total: q1qs.length }).returning();
+      await tx.insert(schema.answers).values(q1qs.map((q, k) => ({ attemptId: att.id, quizId: q1.id, questionId: q.id, selectedIndex: picks[k] })));
+      await tx
+        .update(schema.attempts)
+        .set({ submittedAt: new Date(started.getTime() + (6 + i) * 60_000), score })
+        .where(eq(schema.attempts.id, att.id));
     }
     const [q2] = await tx
       .insert(schema.quizzes)

@@ -6,10 +6,10 @@ import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/db";
 import { audit, clientIp } from "@/lib/audit";
-import { homeFor, requireUser } from "@/lib/auth/dal";
+import { homeFor, requireSignedIn } from "@/lib/auth/dal";
 import { burnTime, hashPassword, passwordSchema, verifyPassword } from "@/lib/auth/password";
-import { createSession, deleteSession, revokeOtherSessions } from "@/lib/auth/session";
-import { clearFailures, lockedUntil, recordFailure } from "@/lib/auth/throttle";
+import { createSession, deleteSession, revokeAllSessions, revokeOtherSessions } from "@/lib/auth/session";
+import { clearFailures, lockedUntil, rateLimit, recordFailure } from "@/lib/auth/throttle";
 import { firstIssue, type FormState } from "@/lib/form";
 import { formatTime } from "@/lib/format";
 
@@ -28,7 +28,13 @@ function safeNext(next: string | undefined, role: string) {
 
 /**
  * One login for every role. Accepts an email, or a student ID for students.
- * Flow: lockout check -> look up user -> constant-time-ish password check -> session.
+ * Flow: look up user -> lockout check -> constant-time-ish password check -> new session.
+ *
+ * Throttling keys:
+ * - account: the user's id when the identifier matches someone, so signing in by email
+ *   and by student ID share ONE budget (not 5 + 5). Unknown identifiers get their own key,
+ *   so they behave exactly like real accounts and can't be used to enumerate.
+ * - ip: only when the client IP is known reliably (TRUSTED_PROXY_HOPS); see clientIp().
  */
 export async function login(_: FormState, formData: FormData): Promise<FormState> {
   const parsed = loginInput.safeParse(Object.fromEntries(formData));
@@ -38,23 +44,28 @@ export async function login(_: FormState, formData: FormData): Promise<FormState
   const identifier = byEmail ? parsed.data.identifier.toLowerCase() : parsed.data.identifier.toUpperCase();
   const ip = await clientIp();
 
-  const locked = (await lockedUntil("account", identifier)) ?? (await lockedUntil("ip", ip));
-  if (locked) return { error: `Too many failed attempts. Try again after ${formatTime(locked)}.` };
-
   const user = await db.query.users.findFirst({
     where: (u, { eq }) => (byEmail ? eq(u.email, identifier) : eq(u.studentId, identifier)),
   });
+  const accountKey = user ? user.id : `unknown:${identifier}`;
+
+  const locked = (await lockedUntil("account", accountKey)) ?? (ip ? await lockedUntil("ip", ip) : null);
+  if (locked) return { error: `Too many failed attempts. Try again after ${formatTime(locked)}.` };
+
   const ok = user ? await verifyPassword(password, user.passwordHash) : (await burnTime(password), false);
 
   if (!user || !ok || !user.active) {
-    await Promise.all([recordFailure("account", identifier), recordFailure("ip", ip)]);
-    await audit(user?.id ?? null, "login_failed", user && !user.active ? `${identifier} (deactivated)` : identifier);
-    if (await lockedUntil("account", identifier)) await audit(user?.id ?? null, "login_locked", identifier);
+    await Promise.all([recordFailure("account", accountKey), ip ? recordFailure("ip", ip) : null]);
+    // Never store what was typed for unknown accounts: people sometimes type their
+    // password into the ID field, and the audit log is visible to administrators.
+    const detail = !user ? "unknown account" : !user.active ? "deactivated account" : undefined;
+    await audit(user?.id ?? null, "login_failed", detail);
+    if (await lockedUntil("account", accountKey)) await audit(user?.id ?? null, "login_locked", detail);
     // Same message for unknown, wrong-password and deactivated, so accounts can't be enumerated.
     return { error: GENERIC_LOGIN_ERROR };
   }
 
-  await clearFailures("account", identifier);
+  await clearFailures("account", accountKey);
   await createSession(user.id);
   await db.update(schema.users).set({ lastLoginAt: sql`now()` }).where(eq(schema.users.id, user.id));
   await audit(user.id, "login");
@@ -72,9 +83,11 @@ const changePasswordInput = z
   .refine((d) => d.newPassword !== d.currentPassword, "Choose a password different from the current one.");
 
 export async function changePassword(_: FormState, formData: FormData): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireSignedIn();
   const parsed = changePasswordInput.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: firstIssue(parsed.error) };
+  // A stolen session must not be usable to guess the current password.
+  if (!(await rateLimit(`pwchange:${user.id}`, 5, 15 * 60_000))) return { error: "Too many attempts. Try again in 15 minutes." };
 
   const row = await db.query.users.findFirst({ where: (u, { eq }) => eq(u.id, user.id) });
   if (!row || !(await verifyPassword(parsed.data.currentPassword, row.passwordHash))) {
@@ -85,8 +98,10 @@ export async function changePassword(_: FormState, formData: FormData): Promise<
     .update(schema.users)
     .set({ passwordHash: await hashPassword(parsed.data.newPassword), mustChangePassword: false })
     .where(eq(schema.users.id, user.id));
-  // Anyone who knew the old password is now signed out everywhere else.
-  await revokeOtherSessions(user.id);
+  // Rotate: end EVERY session, including this one, and issue a fresh token. Anyone who
+  // knew the old password, or had copied this browser's cookie, is now signed out.
+  await revokeAllSessions(user.id);
+  await createSession(user.id);
   await audit(user.id, "password_changed");
 
   if (user.mustChangePassword) redirect(homeFor(user));
@@ -101,7 +116,7 @@ const profileInput = z.object({
 });
 
 export async function updateProfile(_: FormState, formData: FormData): Promise<FormState> {
-  const user = await requireUser();
+  const user = await requireSignedIn();
   const parsed = profileInput.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: firstIssue(parsed.error) };
   const { name, department, program, bio } = parsed.data;
@@ -114,14 +129,14 @@ export async function updateProfile(_: FormState, formData: FormData): Promise<F
 }
 
 export async function signOutOtherDevices() {
-  const user = await requireUser();
+  const user = await requireSignedIn();
   await revokeOtherSessions(user.id);
   await audit(user.id, "sessions_revoked");
   refresh();
 }
 
 export async function logout() {
-  const user = await requireUser().catch(() => null);
+  const user = await requireSignedIn().catch(() => null);
   if (user) await audit(user.id, "logout");
   await deleteSession();
   redirect("/login");

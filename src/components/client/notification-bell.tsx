@@ -91,28 +91,36 @@ export function NotificationBell() {
           </div>
           <ul className="max-h-96 overflow-y-auto">
             {data.items.length === 0 && <li className="px-4 py-6 text-center text-sm text-muted">You&apos;re all caught up.</li>}
-            {data.items.map((n) => (
-              <li key={n.id} className="border-b border-border last:border-0">
-                <Link
-                  href={n.link ?? "#"}
-                  onClick={() => {
-                    setOpen(false);
-                    if (!n.readAt) {
-                      setData((d) => ({ unread: Math.max(0, d.unread - 1), items: d.items.map((i) => (i.id === n.id ? { ...i, readAt: "now" } : i)) }));
-                      markNotificationRead(n.id);
-                    }
-                  }}
-                  className="flex gap-3 px-4 py-3 hover:bg-surface-2"
-                >
+            {data.items.map((n) => {
+              const markRead = () => {
+                setOpen(false);
+                if (!n.readAt) {
+                  setData((d) => ({ unread: Math.max(0, d.unread - 1), items: d.items.map((i) => (i.id === n.id ? { ...i, readAt: "now" } : i)) }));
+                  markNotificationRead(n.id);
+                }
+              };
+              const content = (
+                <>
                   <span className={`mt-1.5 size-2 shrink-0 rounded-full ${n.readAt ? "bg-transparent" : "bg-accent"}`} aria-hidden />
                   <span className="min-w-0">
                     <span className={`block text-sm ${n.readAt ? "text-muted" : "font-medium"}`}>{n.title}</span>
                     {n.body && <span className="block truncate text-xs text-muted">{n.body}</span>}
                     <span className="block text-xs text-muted">{new Date(n.createdAt).toLocaleString()}</span>
                   </span>
-                </Link>
-              </li>
-            ))}
+                </>
+              );
+              const rowClass = "flex w-full gap-3 px-4 py-3 text-left hover:bg-surface-2";
+              return (
+                <li key={n.id} className="border-b border-border last:border-0">
+                  {/* No link: a plain button that marks it read (never a dead href="#"). */}
+                  {n.link ? (
+                    <Link href={n.link} onClick={markRead} className={rowClass}>{content}</Link>
+                  ) : (
+                    <button type="button" onClick={markRead} className={rowClass}>{content}</button>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}

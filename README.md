@@ -12,6 +12,22 @@ credit card. Optional extras (AI, email, hosted database) use free options.
 criteria), security requirements, milestones and an assessment rubric. Use it as the requirements
 guide when students build a similar system.
 
+**Operating it for real:**
+
+| Document | Contents |
+|---|---|
+| [DEPLOYMENT](docs/DEPLOYMENT.md) | Modes, production install, updates, checklist |
+| [SECURITY](docs/SECURITY.md) | Model, fixed vulnerabilities, accepted risks |
+| [DATABASE](docs/DATABASE.md) | Migrations, integrity rules, backups, retention |
+| [TESTING](docs/TESTING.md) | Test suites and latest results |
+| [ARCHITECTURE](docs/ARCHITECTURE.md) | How a request flows through the app |
+| [PRODUCTION_AUDIT](docs/PRODUCTION_AUDIT.md) | Every finding and its status |
+| [CHANGELOG](docs/CHANGELOG.md) | Changes by release |
+
+> `npm start` runs in **production mode** by default. It needs PostgreSQL and an https `APP_URL`, and
+> refuses sample data. To run a production build on one machine with the built-in database (labs,
+> demos, tests), set `EDUWAVE_ENV=local`.
+
 ---
 
 ## Quick start
@@ -193,7 +209,8 @@ docs/FEATURES.md          feature catalogue & project guide
 | `db:generate` | After editing `src/db/schema.ts`, generate a SQL migration |
 | `db:migrate`, `db:seed` | Apply migrations, load sample data |
 | `create-admin` | Create the first administrator on a clean install |
-| `test:e2e`, `test:stability`, `test:a11y` | Browser tests: main flows; data safety, timer and email; accessibility |
+| `test:e2e`, `test:stability`, `test:security`, `test:a11y` | Browser tests: main flows; data safety, timer and email; attack replays; accessibility |
+| `test:db` | Database integrity and concurrency (throwaway database) |
 | `db:backup`, `db:restore` | Verified database backup with rotation; restore that keeps the old data aside |
 
 ## Troubleshooting
@@ -208,12 +225,17 @@ docs/FEATURES.md          feature catalogue & project guide
 ```bash
 rm -rf .pglite && npm run db:migrate && npm run db:seed
 npm run build
-# leave OLLAMA_URL unset; the SMTP settings point at the test's fake mail server
-SMTP_HOST=127.0.0.1 SMTP_PORT=2525 SMTP_USER=test SMTP_PASS=test npm start -- -p 3100
+# local mode (built-in database); the SMTP settings point at the tests' fake mail server
+EDUWAVE_ENV=local SMTP_HOST=127.0.0.1 SMTP_PORT=2525 SMTP_USER=test SMTP_PASS=test npm start -- -p 3100
 npm run test:e2e          # second terminal, ~1 min
 npm run test:stability    # ~2 min (waits for a real 1-minute quiz timer)
+npm run test:security     # replays the production audit's attacks
 npm run test:a11y         # ~2 min, accessibility scan of ~30 pages × light/dark
+# database integrity (19 checks, incl. concurrency) on a throwaway database:
+PGLITE_DIR=./.pglite-test npm run db:migrate && PGLITE_DIR=./.pglite-test npm run test:db
 ```
+
+All suites and their latest results are listed in [docs/TESTING.md](docs/TESTING.md); CI runs them on every push.
 
 **42 checks** across all three roles: security headers and redirects; admin creates a student and a
 course; instructor sets an enrolment key, adds material, publishes an assignment, a quiz and an

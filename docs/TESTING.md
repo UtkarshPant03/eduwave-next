@@ -1,0 +1,54 @@
+# Testing
+
+All tests use free tools: Playwright driving an installed browser (Edge by default; `BROWSER_CHANNEL=chrome` for Chrome), axe-core, and a built-in fake SMTP server (`tests/smtp-catcher.mjs`). CI runs everything on each push (`.github/workflows/ci.yml`).
+
+## Suites
+
+| Command | What it proves | Checks |
+|---|---|---|
+| `npm run lint`, `npm run typecheck`, `npm run build` | Static correctness; the production build compiles | n/a |
+| `npm run test:db` | Database-enforced integrity (cross-course and cross-quiz references, value ranges, grade limits, frozen answers and questions, append-only history, RESTRICT deletes) plus **real concurrency** between answer saving and finalisation | 19 |
+| `npm run test:e2e` | Full course lifecycle for all three roles, plus core security (headers, redirects, cross-user access, grading limits, deactivation, lockout) | 42 |
+| `npm run test:stability` | Data safety: graded work can't be deleted, edit rules, the quiz timer auto-submits, abandoned attempts are closed, email delivery, malformed URLs | 15 |
+| `npm run test:security` | Replays the audit's attacks, including **crafted Server Action calls**: mass assignment, information leaks, privilege escalation, hidden-course leaks, fake Office files, inline student PDFs, temp-password misuse, session rotation, log hygiene, spoofed `X-Forwarded-For` | 10 |
+| `npm run test:a11y` | axe-core WCAG 2.1 A/AA scan of about 30 pages × 3 roles × light and dark theme | 0 violations |
+
+## Running locally
+
+```bash
+# Database tests: use a THROWAWAY database (they insert fixtures)
+PGLITE_DIR=./.pglite-test npm run db:migrate && PGLITE_DIR=./.pglite-test npm run test:db
+# or against PostgreSQL:  DATABASE_URL=postgres://… npm run test:db
+
+# Browser suites: fresh sample data + a production build in "local" mode
+rm -rf .pglite && npm run db:migrate && npm run db:seed
+npm run build
+EDUWAVE_ENV=local SMTP_HOST=127.0.0.1 SMTP_PORT=2525 SMTP_USER=test SMTP_PASS=test npm start -- -p 3100
+npm run test:e2e && npm run test:stability && npm run test:security && npm run test:a11y   # second terminal
+```
+
+The suites run in that order against one database. Each creates its own users and courses with unique names, so they can be re-run.
+
+## Results (2026-11-27, Windows 11, Node 22, Edge)
+
+| Check | Result |
+|---|---|
+| `npm ci`, lint, typecheck, production build | pass (no warnings) |
+| `npm audit --omit=dev` | 0 vulnerabilities |
+| test:db on upgraded PGlite (old data + new migration) | 19/19 |
+| test:db on upgraded PostgreSQL 18 | 19/19 (genuinely concurrent) |
+| test:e2e / test:stability / test:security | 42/42, 15/15, 10/10 |
+| test:a11y | no violations (light and dark) |
+| Mobile overflow at 390 px (landing, login, dashboards, course page) | none |
+| Production start: no DB / sample accounts / clean PostgreSQL | refused / refused / started with HSTS |
+| Seed in production mode | refused |
+| Backup and restore: PGlite; PostgreSQL (`pg_dump` → `pg_restore`) | counts identical; triggers preserved |
+
+## Not covered by automated tests
+
+- **Browsers:** Firefox and Safari. Only Chromium-based Edge is tested.
+- **AI:** AI features against a real model. The AI tutor is off by default.
+- **Whiteboards:** real-time multi-user collaboration.
+- **Load:** performance at large scale. Thousands of users have not been load-tested.
+- **Screen readers:** manual NVDA or VoiceOver runs. Automated checks catch only part of accessibility problems.
+- **Docker:** the image and the CI workflow itself. Both run only on GitHub; locally the same commands were run individually.

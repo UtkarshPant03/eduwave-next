@@ -4,7 +4,7 @@ import { changePassword, signOutOtherDevices, updateProfile } from "@/app/action
 import { ActionForm } from "@/components/action-form";
 import { Avatar, Badge, Button, Card, Field, Input, PageHeader, Table, Textarea } from "@/components/ui";
 import { db } from "@/db";
-import { requireUser, type Role } from "@/lib/auth/dal";
+import { requireSignedIn, type Role } from "@/lib/auth/dal";
 import { listSessions } from "@/lib/auth/session";
 import { listAuditLog } from "@/lib/data/shared";
 import { formatDateTime } from "@/lib/format";
@@ -31,7 +31,7 @@ function describeAgent(ua: string | null) {
 }
 
 export async function AccountPage({ role, searchParams }: { role: Role; searchParams: Promise<{ required?: string }> }) {
-  const user = await requireUser();
+  const user = await requireSignedIn();
   if (user.role !== role) redirect(`/${user.role}/account`);
   const { required } = await searchParams;
   const [profile, sessions, activity] = await Promise.all([
@@ -46,7 +46,7 @@ export async function AccountPage({ role, searchParams }: { role: Role; searchPa
       <PageHeader eyebrow="Account" title="Profile & security" />
 
       {(required || user.mustChangePassword) && (
-        <div role="alert" className="mb-6 flex gap-3 rounded-2xl border border-warning/40 bg-warning/10 p-4 text-sm animate-fade-in">
+        <div role="alert" className="mb-6 flex gap-3 rounded-2xl border border-warning/40 bg-warning/10 p-4 text-sm">
           <ShieldAlert className="size-5 shrink-0 text-warning" />
           <div>
             <p className="font-medium">Choose your own password to continue</p>
@@ -55,7 +55,7 @@ export async function AccountPage({ role, searchParams }: { role: Role; searchPa
         </div>
       )}
 
-      <div className="bg-mesh mb-6 flex flex-wrap items-center gap-5 rounded-2xl border border-border bg-surface p-6 shadow-card">
+      <div className="mb-6 flex flex-wrap items-center gap-5 rounded-2xl border border-border bg-surface p-6 shadow-card">
         <Avatar name={user.name} size="lg" />
         <div className="flex-1">
           <p className="text-lg font-semibold">{user.name}</p>

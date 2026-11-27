@@ -45,7 +45,7 @@ export function Dialog({
       ref={ref}
       onClose={onClose}
       onClick={(e) => e.target === ref.current && onClose()}
-      className={`m-auto w-[calc(100%-2rem)] ${wide ? "max-w-2xl" : "max-w-md"} rounded-2xl border border-border bg-surface p-0 text-foreground shadow-card-lg backdrop:bg-black/40 backdrop:backdrop-blur-sm open:animate-pop`}
+      className={`m-auto w-[calc(100%-2rem)] ${wide ? "max-w-2xl" : "max-w-md"} rounded-2xl border border-border bg-surface p-0 text-foreground shadow-card-lg backdrop:bg-black/40 backdrop: open:animate-pop`}
     >
       <div className="flex items-center justify-between border-b border-border px-5 py-3">
         <h2 className="font-semibold">{title}</h2>

@@ -1,79 +1,90 @@
 @import "tailwindcss";
 
 /* ============================================================================
-   Design tokens. Components use them via Tailwind (bg-surface, text-muted, ...).
+   eduWave design system: restrained, institutional, consistent.
+   - One brand colour (navy) for primary actions and identity; one blue for links,
+     focus and selection. No gradients, glows or decorative motion.
+   - Every text/background pair meets WCAG 2.2 AA (4.5:1) in light AND dark theme;
+     the automated check is tests/a11y.mjs.
+   Components use the tokens via Tailwind (bg-surface, text-muted, border-border, ...).
    Theme follows the OS; the toggle sets <html data-theme="light|dark">.
    ========================================================================== */
 :root {
   color-scheme: light;
-  --background: #f6f7fb;
+  --background: #f5f7fa;
   --surface: #ffffff;
-  --surface-2: #f1f3f9;
-  --foreground: #121528;
-  --muted: #5b6178;
-  --border: #e3e6f0;
-  --accent: #3b4fd8;
-  --accent-2: #7c5cf0;
+  --surface-2: #eef2f6;
+  --foreground: #202b36;
+  --muted: #5a6878;
+  --border: #e0e6ec;
+  --border-strong: #c9d3dd;
+  --brand: #17324d; /* primary actions, logo, active navigation */
+  --accent: #315c7d; /* links, focus, selection, tints */
+  --accent-2: var(--accent);
   --accent-foreground: #ffffff;
-  --danger: #b42318;
-  --success: #05603a;
-  --warning: #b54708;
-  --ring: rgb(59 79 216 / 0.35);
-  --shadow: 0 1px 2px rgb(16 24 64 / 0.04), 0 4px 16px -4px rgb(16 24 64 / 0.08);
-  --shadow-lg: 0 2px 4px rgb(16 24 64 / 0.05), 0 18px 40px -12px rgb(16 24 64 / 0.22);
+  --danger: #a63d3d;
+  --success: #1f6b49;
+  --warning: #8a5a12;
+  --ring: rgb(49 92 125 / 0.35);
+  --shadow: 0 1px 2px rgb(16 24 40 / 0.05);
+  --shadow-lg: 0 4px 12px rgb(16 24 40 / 0.12);
   /* chart roles (dataviz reference palette, validated) */
   --series-1: #257de0;
   --series-2: #f47230;
-  --status-good: #0aac23;
-  --chart-grid: #e8eaf2;
+  --status-good: #1f6b49;
+  --chart-grid: #e6ebf0;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
     color-scheme: dark;
-    --background: #0b0d17;
-    --surface: #131726;
-    --surface-2: #1b2033;
-    --foreground: #e9ebf5;
-    --muted: #9aa0b8;
-    --border: #262c42;
-    --accent: #8393ff;
-    --accent-2: #a98bff;
-    --accent-foreground: #0b0d17;
-    --danger: #ff8a80;
-    --success: #6ee7a8;
-    --warning: #fdb022;
-    --ring: rgb(131 147 255 / 0.4);
-    --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 4px 16px -4px rgb(0 0 0 / 0.4);
-    --shadow-lg: 0 2px 4px rgb(0 0 0 / 0.3), 0 18px 40px -12px rgb(0 0 0 / 0.6);
+    --background: #0f1720;
+    --surface: #16202b;
+    --surface-2: #1d2935;
+    --foreground: #e6ebf0;
+    --muted: #9cabb9;
+    --border: #2a3744;
+    --border-strong: #3a4a5a;
+    --brand: #3a6a93;
+    --accent: #8dbbdb;
+    --accent-2: var(--accent);
+    --accent-foreground: #0f1720;
+    --danger: #f19b9b;
+    --success: #7fcfa5;
+    --warning: #e8b25c;
+    --ring: rgb(141 187 219 / 0.4);
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+    --shadow-lg: 0 4px 12px rgb(0 0 0 / 0.45);
     --series-1: #338ced;
     --series-2: #e76624;
-    --status-good: #0aac23;
-    --chart-grid: #232840;
+    --status-good: #7fcfa5;
+    --chart-grid: #26323e;
   }
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --background: #0b0d17;
-  --surface: #131726;
-  --surface-2: #1b2033;
-  --foreground: #e9ebf5;
-  --muted: #9aa0b8;
-  --border: #262c42;
-  --accent: #8393ff;
-  --accent-2: #a98bff;
-  --accent-foreground: #0b0d17;
-  --danger: #ff8a80;
-  --success: #6ee7a8;
-  --warning: #fdb022;
-  --ring: rgb(131 147 255 / 0.4);
-  --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 4px 16px -4px rgb(0 0 0 / 0.4);
-  --shadow-lg: 0 2px 4px rgb(0 0 0 / 0.3), 0 18px 40px -12px rgb(0 0 0 / 0.6);
+  --background: #0f1720;
+  --surface: #16202b;
+  --surface-2: #1d2935;
+  --foreground: #e6ebf0;
+  --muted: #9cabb9;
+  --border: #2a3744;
+  --border-strong: #3a4a5a;
+  --brand: #3a6a93;
+  --accent: #8dbbdb;
+  --accent-2: var(--accent);
+  --accent-foreground: #0f1720;
+  --danger: #f19b9b;
+  --success: #7fcfa5;
+  --warning: #e8b25c;
+  --ring: rgb(141 187 219 / 0.4);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-lg: 0 4px 12px rgb(0 0 0 / 0.45);
   --series-1: #338ced;
   --series-2: #e76624;
-  --status-good: #0aac23;
-  --chart-grid: #232840;
+  --status-good: #7fcfa5;
+  --chart-grid: #26323e;
 }
 
 @theme inline {
@@ -83,6 +94,8 @@
   --color-foreground: var(--foreground);
   --color-muted: var(--muted);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-brand: var(--brand);
   --color-accent: var(--accent);
   --color-accent-2: var(--accent-2);
   --color-accent-foreground: var(--accent-foreground);
@@ -95,27 +108,28 @@
   --font-mono: var(--font-geist-mono);
   --shadow-card: var(--shadow);
   --shadow-card-lg: var(--shadow-lg);
-  --animate-fade-in: fade-in 0.35s cubic-bezier(0.2, 0.7, 0.2, 1) both;
-  --animate-pop: pop 0.18s ease-out;
-  --animate-shimmer: shimmer 1.6s linear infinite;
-  --animate-float: float 7s ease-in-out infinite;
+  /* Motion: only where it explains a change (menus, dialogs). No entrance effects. */
+  --animate-fade-in: none;
+  --animate-pop: pop 120ms ease-out;
+  --animate-shimmer: pulse-soft 1.6s ease-in-out infinite;
+  --animate-float: none;
 }
 
-@keyframes fade-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: none; }
+/* A tighter, consistent radius scale (the old one went up to 24px "bubble" cards). */
+@theme {
+  --radius-lg: 0.375rem;
+  --radius-xl: 0.5rem;
+  --radius-2xl: 0.625rem;
+  --radius-3xl: 0.75rem;
 }
+
 @keyframes pop {
-  from { transform: scale(0.96); opacity: 0; }
-  to { transform: scale(1); opacity: 1; }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
-@keyframes shimmer {
-  from { background-position: -400px 0; }
-  to { background-position: 400px 0; }
-}
-@keyframes float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-10px); }
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 
 body {
@@ -126,61 +140,30 @@ body {
 
 ::selection { background: var(--ring); }
 
-/* ---------------------------- reusable effects ---------------------------- */
-
-/* Brand gradient text (headings, numbers). */
-.text-gradient {
-  background: linear-gradient(120deg, var(--accent), var(--accent-2));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-
-/* Brand gradient fill. */
-.bg-brand { background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
-
-/* Soft mesh glow behind hero sections. */
-.bg-mesh {
-  background:
-    radial-gradient(60rem 30rem at 10% -10%, color-mix(in oklab, var(--accent) 18%, transparent), transparent 60%),
-    radial-gradient(50rem 30rem at 100% 0%, color-mix(in oklab, var(--accent-2) 16%, transparent), transparent 60%);
-}
-
-/* Dotted grid texture. */
-.bg-dots {
-  background-image: radial-gradient(color-mix(in oklab, var(--muted) 30%, transparent) 1px, transparent 1px);
-  background-size: 18px 18px;
-}
-
-/* Card that lifts and gains an accent edge on hover. */
-.card-hover { transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease; }
-.card-hover:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); border-color: color-mix(in oklab, var(--accent) 45%, var(--border)); }
-
-/* Shimmering skeleton blocks. */
-.skeleton {
-  background: linear-gradient(90deg, var(--surface-2) 0, color-mix(in oklab, var(--surface-2) 40%, var(--surface)) 50%, var(--surface-2) 100%);
-  background-size: 800px 100%;
-  animation: var(--animate-shimmer);
-}
-
-/* Staggered entrance for lists/grids: add .stagger to the parent. */
-.stagger > * { animation: var(--animate-fade-in); }
-.stagger > *:nth-child(2) { animation-delay: 40ms; }
-.stagger > *:nth-child(3) { animation-delay: 80ms; }
-.stagger > *:nth-child(4) { animation-delay: 120ms; }
-.stagger > *:nth-child(5) { animation-delay: 160ms; }
-.stagger > *:nth-child(6) { animation-delay: 200ms; }
-.stagger > *:nth-child(n + 7) { animation-delay: 240ms; }
+/* ---------------------------------------------------------------------------
+   Legacy effect classes, kept as names so markup stays stable, now restrained.
+   --------------------------------------------------------------------------- */
+.text-gradient { color: var(--brand); }
+:root[data-theme="dark"] .text-gradient { color: var(--accent); }
+@media (prefers-color-scheme: dark) { :root:where(:not([data-theme="light"])) .text-gradient { color: var(--accent); } }
+.bg-brand { background: var(--brand); }
+.bg-mesh { background: none; }
+.bg-dots { background: none; }
+/* Interactive cards: a quiet border change, no lifting or glow. */
+.card-hover { transition: border-color 120ms ease; }
+.card-hover:hover { border-color: var(--border-strong); }
+.skeleton { background: var(--surface-2); animation: var(--animate-shimmer); }
+.stagger > * { animation: none; }
 
 /* Respect users who turn off animations at the OS level. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-delay: 0ms !important; transition-duration: 0.01ms !important; }
 }
 
-/* Rendered Markdown (AI tutor, discussions, instructions). */
+/* Rendered Markdown (discussions, instructions, AI tutor). */
 .prose-chat p { margin: 0.45em 0; }
 .prose-chat ul, .prose-chat ol { margin: 0.45em 0; padding-left: 1.25em; list-style: revert; }
-.prose-chat code { background: var(--surface-2); padding: 0.1em 0.35em; border-radius: 5px; font-size: 0.9em; }
-.prose-chat pre { background: var(--surface-2); padding: 0.85em; border-radius: 8px; overflow-x: auto; font-size: 0.85em; }
+.prose-chat code { background: var(--surface-2); padding: 0.1em 0.35em; border-radius: 4px; font-size: 0.9em; }
+.prose-chat pre { background: var(--surface-2); padding: 0.85em; border-radius: 6px; overflow-x: auto; font-size: 0.85em; }
 .prose-chat h3 { font-weight: 600; margin: 0.8em 0 0.3em; }
 .prose-chat a { color: var(--accent); text-decoration: underline; }

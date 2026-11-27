@@ -1,11 +1,11 @@
 import { z } from "zod";
-import { getCurrentUser } from "@/lib/auth/dal";
+import { getActiveUser } from "@/lib/auth/dal";
 import { getFileForUser } from "@/lib/data/shared";
 import { isInlineSafe } from "@/lib/uploads";
 
 /** Serves an uploaded file to members of its class only. */
 export async function GET(_: Request, ctx: RouteContext<"/files/[fileId]">) {
-  const user = await getCurrentUser();
+  const user = await getActiveUser();
   if (!user) return new Response("Unauthorized", { status: 401 });
 
   const { fileId } = await ctx.params;
@@ -14,7 +14,7 @@ export async function GET(_: Request, ctx: RouteContext<"/files/[fileId]">) {
   // Same 404 for "doesn't exist" and "not yours", so ids can't be probed.
   if (!file) return new Response("Not found", { status: 404 });
 
-  const inline = isInlineSafe(file.mimeType);
+  const inline = isInlineSafe(file.mimeType, file.uploaderRole);
   const headers = new Headers({
     "Content-Type": file.mimeType,
     "Content-Length": String(file.size),

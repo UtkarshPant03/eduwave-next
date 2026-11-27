@@ -2,28 +2,31 @@
  * Admin console queries. Callers must have passed requireAdmin().
  */
 import "server-only";
-import { and, asc, count, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { countOf, outer } from "./sql";
 
 const { users, courses, enrollments, auditLog, submissions, attempts } = schema;
 
+/**
+ * Headline numbers for the admin overview, in ONE round trip. Every number means exactly
+ * what its label says: ACTIVE accounts, PUBLISHED courses, FINISHED work, failed sign-ins
+ * in the last 24 hours (not "in the last N rows of the log").
+ */
 export async function siteStats() {
-  const [[u], [c], [e], [s], [a], roles] = await Promise.all([
-    db.select({ n: count() }).from(users),
-    db.select({ n: count() }).from(courses),
-    db.select({ n: count() }).from(enrollments),
-    db.select({ n: count() }).from(submissions),
-    db.select({ n: count() }).from(attempts),
-    db.select({ role: users.role, n: count() }).from(users).groupBy(users.role),
-  ]);
-  return {
-    users: u.n,
-    courses: c.n,
-    enrollments: e.n,
-    submissions: s.n + a.n,
-    byRole: Object.fromEntries(roles.map((r) => [r.role, r.n])) as Record<string, number>,
-  };
+  const [row] = await db
+    .select({
+      students: sql<number>`(select count(*) from ${users} where ${users.role} = 'student' and ${users.active})`.mapWith(Number),
+      instructors: sql<number>`(select count(*) from ${users} where ${users.role} = 'instructor' and ${users.active})`.mapWith(Number),
+      courses: sql<number>`(select count(*) from ${courses})`.mapWith(Number),
+      published: sql<number>`(select count(*) from ${courses} where ${courses.published})`.mapWith(Number),
+      enrollments: sql<number>`(select count(*) from ${enrollments})`.mapWith(Number),
+      submissions: sql<number>`(select count(*) from ${submissions})`.mapWith(Number),
+      quizAttempts: sql<number>`(select count(*) from ${attempts} where ${attempts.submittedAt} is not null)`.mapWith(Number),
+      failedSignIns24h: sql<number>`(select count(*) from ${auditLog} where ${auditLog.action} in ('login_failed', 'login_locked') and ${auditLog.createdAt} > now() - interval '24 hours')`.mapWith(Number),
+    })
+    .from(sql`(select 1) as one`);
+  return row;
 }
 
 export function listUsers(filter: { q?: string; role?: string }) {

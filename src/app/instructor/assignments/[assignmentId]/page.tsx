@@ -65,6 +65,7 @@ export default async function GradeAssignmentPage({ params }: PageProps<"/instru
                     </div>
                     <ActionForm action={gradeSubmission} submitLabel={r.grade != null ? "Update grade" : "Save grade"}>
                       <input type="hidden" name="submissionId" value={r.submissionId} />
+                      {r.submittedAt && <input type="hidden" name="version" value={r.submittedAt.toISOString()} />}
                       <Field label={`Points (out of ${assignment.maxPoints})`}>
                         <Input name="grade" type="number" min={0} max={assignment.maxPoints} defaultValue={r.grade ?? ""} required />
                       </Field>

@@ -12,13 +12,13 @@ type Variant = "primary" | "secondary" | "danger" | "ghost";
 
 export const buttonClass = (variant: Variant = "primary", size: "sm" | "md" = "md") =>
   cx(
-    "inline-flex items-center justify-center gap-2 rounded-xl font-medium transition active:scale-[0.98] whitespace-nowrap",
-    "disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100",
+    "inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors whitespace-nowrap",
+    "disabled:opacity-60 disabled:cursor-not-allowed",
     "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-    size === "md" ? "px-4 py-2 text-sm" : "px-2.5 py-1.5 text-xs",
-    variant === "primary" && "bg-brand text-white shadow-sm shadow-accent/30 hover:brightness-110",
-    variant === "secondary" && "border border-border bg-surface hover:bg-surface-2",
-    variant === "danger" && "border border-border bg-surface text-danger hover:bg-danger/10",
+    size === "md" ? "min-h-9 px-3.5 py-2 text-sm" : "min-h-8 px-2.5 py-1.5 text-xs",
+    variant === "primary" && "bg-brand text-white hover:opacity-90",
+    variant === "secondary" && "border border-border-strong bg-surface hover:bg-surface-2",
+    variant === "danger" && "border border-border-strong bg-surface text-danger hover:bg-danger/10",
     variant === "ghost" && "text-muted hover:bg-surface-2 hover:text-foreground",
   );
 
@@ -32,7 +32,7 @@ export function Button({
 }
 
 const fieldClass =
-  "w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm placeholder:text-muted transition focus:border-accent focus:outline-none focus:ring-4 focus:ring-[var(--ring)] disabled:opacity-60";
+  "w-full rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm placeholder:text-muted transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:opacity-60";
 
 export function Input({ className, ...props }: ComponentProps<"input">) {
   return <input className={cx(fieldClass, className)} {...props} />;
@@ -72,13 +72,13 @@ export function Card({
   className?: string;
 }) {
   return (
-    <section className={cx("animate-fade-in rounded-2xl border border-border bg-surface p-5 shadow-card", className)}>
+    <section className={cx("rounded-xl border border-border bg-surface p-5", className)}>
       {(title || action) && (
         <div className="mb-4 flex items-start justify-between gap-3">
-          <div className="flex items-start gap-3">
-            {icon && <IconChip>{icon}</IconChip>}
+          <div className="flex items-start gap-2">
+            {icon && <span aria-hidden className="mt-0.5 text-muted [&>svg]:size-4">{icon}</span>}
             <div>
-              {title && <h2 className="text-base font-semibold">{title}</h2>}
+              {title && <h2 className="text-[15px] font-semibold">{title}</h2>}
               {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
             </div>
           </div>
@@ -91,16 +91,17 @@ export function Card({
 }
 
 /** Small tinted square holding an icon. */
-export function IconChip({ children, tone = "accent", size = "md" }: { children: ReactNode; tone?: "accent" | "success" | "warning" | "danger" | "neutral"; size?: "sm" | "md" | "lg" }) {
+export function IconChip({ children, tone = "accent", size = "md" }: { children: ReactNode; tone?: "accent" | "brand" | "success" | "warning" | "danger" | "neutral"; size?: "sm" | "md" | "lg" }) {
   return (
     <span
       aria-hidden
       className={cx(
-        "grid shrink-0 place-items-center rounded-xl",
+        "grid shrink-0 place-items-center rounded-lg",
         size === "sm" && "size-7 [&>svg]:size-3.5",
         size === "md" && "size-9 [&>svg]:size-4",
         size === "lg" && "size-11 [&>svg]:size-5",
         tone === "accent" && "bg-accent/10 text-accent",
+        tone === "brand" && "bg-brand text-white",
         tone === "success" && "bg-success/10 text-success",
         tone === "warning" && "bg-warning/10 text-warning",
         tone === "danger" && "bg-danger/10 text-danger",
@@ -143,13 +144,13 @@ export function PageHeader({
   breadcrumbs?: { label: string; href?: string }[];
 }) {
   return (
-    <div className="mb-7 animate-fade-in">
+    <div className="mb-6">
       {breadcrumbs && <Breadcrumbs items={breadcrumbs} />}
       <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          {eyebrow && <p className="mb-1 text-xs font-semibold uppercase tracking-[0.14em] text-accent">{eyebrow}</p>}
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-[1.75rem]">{title}</h1>
-          {subtitle && <p className="mt-1.5 text-sm text-muted">{subtitle}</p>}
+        <div className="min-w-0">
+          {eyebrow && <p className="mb-1 text-sm text-muted">{eyebrow}</p>}
+          <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{title}</h1>
+          {subtitle && <p className="mt-1 text-sm text-muted">{subtitle}</p>}
         </div>
         {action && <div className="flex flex-wrap gap-2">{action}</div>}
       </div>
@@ -159,7 +160,7 @@ export function PageHeader({
 
 export function Empty({ children, icon, action }: { children: ReactNode; icon?: ReactNode; action?: ReactNode }) {
   return (
-    <div className="bg-dots flex flex-col items-center gap-3 rounded-2xl border border-dashed border-border px-4 py-10 text-center text-sm text-muted">
+    <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border-strong px-4 py-8 text-center text-sm text-muted">
       {icon && <IconChip size="lg" tone="neutral">{icon}</IconChip>}
       <div>{children}</div>
       {action}
@@ -186,7 +187,7 @@ export function Badge({
   return (
     <span
       className={cx(
-        "inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium [&>svg]:size-3",
+        "inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-1.5 py-0.5 text-xs font-medium [&>svg]:size-3",
         tone === "neutral" && "border-border bg-surface-2 text-muted",
         tone === "accent" && "border-accent/30 bg-accent/10 text-accent",
         tone === "success" && "border-success/30 bg-success/10 text-success",
@@ -203,14 +204,14 @@ export function Table({ head, children }: { head: ReactNode[]; children: ReactNo
   return (
     <div className="-mx-1 overflow-x-auto">
       <table className="w-full text-left text-sm">
-        <thead className="border-b border-border text-[11px] uppercase tracking-wider text-muted">
+        <thead className="border-b border-border-strong text-xs text-muted">
           <tr>
             {head.map((h, i) => (
-              <th key={i} className="whitespace-nowrap px-2 py-2.5 font-medium">{h}</th>
+              <th key={i} scope="col" className="whitespace-nowrap px-3 py-2.5 font-semibold">{h}</th>
             ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-border [&>tr]:transition-colors [&>tr:hover]:bg-surface-2/60">{children}</tbody>
+        <tbody className="divide-y divide-border [&>tr:hover]:bg-surface-2/60 [&_td]:px-3">{children}</tbody>
       </table>
     </div>
   );
@@ -219,12 +220,12 @@ export function Table({ head, children }: { head: ReactNode[]; children: ReactNo
 /** Headline number with an icon. Not a chart: one value doesn't need axes. */
 export function StatTile({ label, value, hint, icon, tone = "accent" }: { label: string; value: ReactNode; hint?: ReactNode; icon?: ReactNode; tone?: "accent" | "success" | "warning" | "danger" | "neutral" }) {
   return (
-    <div className="card-hover rounded-2xl border border-border bg-surface p-4 shadow-card">
+    <div className="rounded-xl border border-border bg-surface p-4" data-tone={tone}>
       <div className="flex items-center justify-between gap-2">
         <p className="text-sm text-muted">{label}</p>
-        {icon && <IconChip tone={tone} size="sm">{icon}</IconChip>}
+        {icon && <span aria-hidden className="text-muted [&>svg]:size-4">{icon}</span>}
       </div>
-      <p className="mt-2 text-2xl font-semibold tabular-nums tracking-tight">{value}</p>
+      <p className="mt-1.5 text-2xl font-semibold tabular-nums">{value}</p>
       {hint && <p className="mt-0.5 truncate text-xs text-muted">{hint}</p>}
     </div>
   );
@@ -236,7 +237,7 @@ export function Progress({ value, label, showValue = true }: { value: number; la
   return (
     <div className="flex items-center gap-2" role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100} aria-label={label}>
       <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-2">
-        <div className="bg-brand h-full rounded-full transition-[width] duration-700" style={{ width: `${pct}%` }} />
+        <div className="h-full rounded-full bg-accent" style={{ width: `${pct}%` }} />
       </div>
       {showValue && <span className="w-9 text-right text-xs tabular-nums text-muted">{Math.round(pct)}%</span>}
     </div>
@@ -252,7 +253,7 @@ export function ProgressRing({ value, size = 56, label }: { value: number; size?
     <div className="relative shrink-0" style={{ width: size, height: size }} role="img" aria-label={`${label}: ${Math.round(pct)}%`}>
       <svg viewBox="0 0 36 36" className="size-full -rotate-90" aria-hidden>
         <circle cx="18" cy="18" r={r} fill="none" stroke="var(--surface-2)" strokeWidth="3.5" />
-        <circle cx="18" cy="18" r={r} fill="none" stroke="var(--accent)" strokeWidth="3.5" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - pct / 100)} className="transition-[stroke-dashoffset] duration-700" />
+        <circle cx="18" cy="18" r={r} fill="none" stroke="var(--accent)" strokeWidth="3.5" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - pct / 100)} />
       </svg>
       <span className="absolute inset-0 grid place-items-center text-[11px] font-semibold tabular-nums">{Math.round(pct)}%</span>
     </div>
@@ -265,18 +266,16 @@ export function Avatar({ name, size = "md" }: { name: string; size?: "sm" | "md"
     .slice(0, 2)
     .map((p) => p[0]?.toUpperCase())
     .join("");
-  // Stable hue per name, so the same person always gets the same colour.
-  const hue = [...name].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) % 360, 7);
+  // Neutral initials: identity comes from the name next to it, not from colour.
   return (
     <span
       aria-hidden
       className={cx(
-        "grid shrink-0 place-items-center rounded-full font-semibold text-white ring-2 ring-surface",
-        size === "sm" && "size-7 text-[10px]",
+        "grid shrink-0 place-items-center rounded-full border border-border-strong bg-surface-2 font-semibold text-foreground",
+        size === "sm" && "size-7 text-[11px]",
         size === "md" && "size-9 text-xs",
         size === "lg" && "size-14 text-lg",
       )}
-      style={{ background: `linear-gradient(135deg, hsl(${hue} 65% 52%), hsl(${(hue + 40) % 360} 70% 45%))` }}
     >
       {initials}
     </span>
@@ -289,11 +288,11 @@ export function PageSkeleton() {
       <div className="skeleton h-4 w-32 rounded" />
       <div className="skeleton h-8 w-72 rounded-lg" />
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {[0, 1, 2, 3].map((i) => <div key={i} className="skeleton h-24 rounded-2xl" />)}
+        {[0, 1, 2, 3].map((i) => <div key={i} className="skeleton h-24 rounded-xl" />)}
       </div>
       <div className="grid gap-4 lg:grid-cols-3">
-        <div className="skeleton h-64 rounded-2xl lg:col-span-2" />
-        <div className="skeleton h-64 rounded-2xl" />
+        <div className="skeleton h-64 rounded-xl lg:col-span-2" />
+        <div className="skeleton h-64 rounded-xl" />
       </div>
     </div>
   );

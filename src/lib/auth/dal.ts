@@ -41,18 +41,42 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
 
 export const homeFor = (user: Pick<CurrentUser, "role">) => `/${user.role}`;
 
-/** Any signed-in user. Used by shared pages such as account settings. */
+/**
+ * Any signed-in user who has finished setting up their account. Used by shared pages and
+ * actions (calendar, boards, discussions, tasks, notifications).
+ *
+ * Users holding an issued (temporary) password are sent to choose their own first. This
+ * check lives here, not only in the role helpers, so a leaked temporary password can't be
+ * used to reach shared pages, actions or downloads without the owner noticing.
+ */
 export async function requireUser(): Promise<CurrentUser> {
+  const user = await requireSignedIn();
+  if (user.mustChangePassword) redirect(`/${user.role}/account?required=1`);
+  return user;
+}
+
+/**
+ * Signed in, even if the password still has to be changed. ONLY for the account page and
+ * its own actions (change password, profile, sign out), which must work in that state.
+ */
+export async function requireSignedIn(): Promise<CurrentUser> {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
   return user;
 }
 
+/**
+ * For route handlers, which answer with a status code instead of redirecting:
+ * returns null for signed-out users AND for users who must still change their password.
+ */
+export async function getActiveUser(): Promise<CurrentUser | null> {
+  const user = await getCurrentUser();
+  return user && !user.mustChangePassword ? user : null;
+}
+
 async function requireRole(role: Role): Promise<CurrentUser> {
   const user = await requireUser();
   if (user.role !== role) redirect(homeFor(user));
-  // Users with an issued password must pick their own before anything else.
-  if (user.mustChangePassword) redirect(`/${user.role}/account?required=1`);
   return user;
 }
 

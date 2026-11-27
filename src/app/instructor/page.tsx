@@ -29,8 +29,9 @@ export default async function InstructorHome() {
       <PageHeader eyebrow={greeting(now)} title={user.name} subtitle="Here's what needs your attention across your courses." />
 
       <div className="stagger mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatTile label="Active courses" value={courses.length} icon={<BookOpen />} />
-        <StatTile label="Students" value={students} icon={<Users />} tone="success" />
+        <StatTile label="Courses" value={courses.length} icon={<BookOpen />} hint={`${courses.filter((c) => c.published).length} visible to students`} />
+        {/* A student in two of your courses is two enrolments: label says exactly that. */}
+        <StatTile label="Enrolments" value={students} icon={<Users />} hint="across your courses" />
         <StatTile label="Awaiting grading" value={toGrade} icon={<Inbox />} tone={toGrade ? "warning" : "neutral"} />
         <StatTile label="Next 14 days" value={events.length} hint="deadlines & live classes" icon={<CalendarClock />} tone="neutral" />
       </div>

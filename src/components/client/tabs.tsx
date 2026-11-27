@@ -57,7 +57,7 @@ export function Tabs({ tabs }: { tabs: { id: string; label: ReactNode; content: 
         ))}
       </div>
       {tabs.map((t) => (
-        <div key={t.id} role="tabpanel" id={`panel-${t.id}`} aria-labelledby={`tab-${t.id}`} hidden={active !== t.id} className="animate-fade-in">
+        <div key={t.id} role="tabpanel" id={`panel-${t.id}`} aria-labelledby={`tab-${t.id}`} hidden={active !== t.id}>
           {t.content}
         </div>
       ))}

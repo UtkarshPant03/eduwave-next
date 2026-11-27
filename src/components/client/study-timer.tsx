@@ -116,7 +116,7 @@ export function StudyTimer() {
         </button>
       </div>
       <p className="text-xs text-muted">
-        {done} focus session{done === 1 ? "" : "s"} today {"🍅".repeat(Math.min(done, 8))}
+        {done} focus session{done === 1 ? "" : "s"} completed today
       </p>
     </div>
   );

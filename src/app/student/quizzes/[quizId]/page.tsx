@@ -1,6 +1,5 @@
 import { CheckCircle2, Clock, Info, Lock, Shuffle, XCircle } from "lucide-react";
 import { startAttempt } from "@/app/actions/student";
-import { Celebrate } from "@/components/client/celebrate";
 import { QuizRunner } from "@/components/client/quiz-runner";
 import { Badge, Button, Card, PageHeader, ProgressRing } from "@/components/ui";
 import { requireStudent } from "@/lib/auth/dal";
@@ -68,12 +67,13 @@ export default async function StudentQuizPage({ params }: PageProps<"/student/qu
 
   // 3. Submitted
   const percent = ((attempt.score ?? 0) / Math.max(attempt.total, 1)) * 100;
-  const message = percent >= 80 ? "Excellent work! 🎉" : percent >= 50 ? "Good effort, keep going!" : "Keep practising. Review the explanations once they're available.";
+  const message = revealAnswers
+    ? "Answers and explanations are shown below."
+    : "Answers and explanations will be available after the quiz deadline.";
   return (
     <>
-      {percent >= 80 && <Celebrate id={attempt.id} />}
       <PageHeader {...header} />
-      <Card className="bg-mesh mb-6">
+      <Card className="mb-6">
         <div className="flex flex-wrap items-center gap-6">
           <ProgressRing value={percent} size={96} label="Score" />
           <div>

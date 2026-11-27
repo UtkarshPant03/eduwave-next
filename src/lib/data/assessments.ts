@@ -8,7 +8,7 @@ import { and, asc, count, desc, eq, isNull, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { CurrentUser } from "@/lib/auth/dal";
 import { courseForInstructor, courseForStudent } from "@/lib/access";
-import { finalizeIfExpired } from "@/lib/quiz-engine";
+import { finalizeExpiredAttempts, finalizeIfExpired, GRACE_MS } from "@/lib/quiz-engine";
 
 const { users, questions, attempts, answers, assignments, submissions, files, enrollments } = schema;
 
@@ -31,7 +31,9 @@ export async function getStudentQuiz(user: CurrentUser, quizId: string) {
     attempt = await db.query.attempts.findFirst({ where: (a, { eq }) => eq(a.id, attempt!.id) });
   }
 
-  const revealAnswers = Boolean(attempt?.submittedAt) && quiz.deadline.getTime() < Date.now();
+  // Reveal only after the deadline AND the grace period: otherwise a student who has
+  // finished could pass the key to someone still saving their last answers.
+  const revealAnswers = Boolean(attempt?.submittedAt) && quiz.deadline.getTime() + GRACE_MS < Date.now();
   const questionRows = await db.query.questions.findMany({
     where: (q, { eq }) => eq(q.quizId, quizId),
     orderBy: (q, { asc }) => asc(q.position),
@@ -68,6 +70,7 @@ export async function getQuizAnalytics(user: CurrentUser, quizId: string) {
   const quiz = await db.query.quizzes.findFirst({ where: (q, { eq }) => eq(q.id, quizId) });
   if (!quiz) notFound();
   const course = await courseForInstructor(user, quiz.courseId);
+  await finalizeExpiredAttempts({ quizId: quiz.id });
 
   const questionStats = await db
     .select({

@@ -30,7 +30,7 @@ export async function ThreadPage({ role, courseId, threadId }: { role: "student"
         action={(manager || thread.authorId === user.id) && <ThreadModeration threadId={thread.id} manager={manager} pinned={thread.pinned} locked={thread.locked} />}
       />
       <div className="max-w-3xl space-y-4">
-        <article className="rounded-2xl border border-border bg-surface p-5 shadow-card animate-fade-in">
+        <article className="rounded-2xl border border-border bg-surface p-5 shadow-card">
           <header className="mb-3 flex flex-wrap items-center gap-2 text-sm">
             <Avatar name={thread.author} size="sm" />
             <span className="font-medium">{thread.author}</span>

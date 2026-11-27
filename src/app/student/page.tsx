@@ -34,7 +34,7 @@ export default async function StudentHome() {
 
   return (
     <>
-      <PageHeader eyebrow={greeting(now)} title={user.name.split(" ")[0] + " 👋"} subtitle="Here's what's coming up in your courses." />
+      <PageHeader eyebrow={greeting(now)} title={user.name} subtitle="Here's what's coming up in your courses." />
 
       <div className="stagger mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatTile label="Enrolled courses" value={courses.length} icon={<BookOpen />} />
@@ -63,7 +63,7 @@ export default async function StudentHome() {
 
           <Card title="Upcoming deadlines" icon={<AlarmClock />} description="Next 14 days, across all courses.">
             {due.length === 0 ? (
-              <p className="text-sm text-muted">Nothing due. Enjoy the breathing room!</p>
+              <p className="text-sm text-muted">Nothing due in the next two weeks.</p>
             ) : (
               <ul className="divide-y divide-border">
                 {due.map((e) => {

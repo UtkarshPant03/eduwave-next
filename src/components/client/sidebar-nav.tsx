@@ -48,17 +48,17 @@ function NavLinks({ links, pathname, onNavigate }: { links: NavItem[]; pathname:
         const heading = l.group && l.group !== links[i - 1]?.group ? l.group : null;
         return (
           <li key={l.href}>
-            {heading && <p className="mb-1 mt-4 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">{heading}</p>}
+            {heading && <p className="mb-1 mt-4 px-3 text-xs font-semibold text-muted">{heading}</p>}
             <Link
               href={l.href}
               onClick={onNavigate}
               aria-current={active ? "page" : undefined}
-              className={`group relative flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${
-                active ? "bg-accent/10 font-medium text-accent" : "text-muted hover:bg-surface-2 hover:text-foreground"
+              className={`relative flex min-h-9 items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
+                active ? "bg-surface-2 font-medium text-foreground" : "text-muted hover:bg-surface-2 hover:text-foreground"
               }`}
             >
-              {active && <span className="bg-brand absolute inset-y-1.5 left-0 w-1 rounded-full" aria-hidden />}
-              <Icon className="size-4 transition group-hover:scale-110" />
+              {active && <span className="bg-brand absolute inset-y-1.5 left-0 w-[3px] rounded-full" aria-hidden />}
+              <Icon className="size-4" aria-hidden />
               {l.label}
             </Link>
           </li>
@@ -100,8 +100,8 @@ export function MobileNav({ links, header, footer }: { links: NavItem[]; header?
       {open &&
         createPortal(
           <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Menu">
-            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-fade-in" onClick={() => setOpen(false)} />
-            <nav className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col gap-4 overflow-y-auto bg-surface p-4 shadow-xl animate-fade-in">
+            <div className="absolute inset-0 bg-black/40" onClick={() => setOpen(false)} />
+            <nav className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col gap-4 overflow-y-auto border-r border-border bg-surface p-4 shadow-card-lg">
               <div className="flex items-center justify-between">
                 {header}
                 <button onClick={() => setOpen(false)} className="grid size-9 place-items-center rounded-xl hover:bg-surface-2" aria-label="Close menu">

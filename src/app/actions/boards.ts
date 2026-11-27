@@ -9,9 +9,14 @@ import { requireUser } from "@/lib/auth/dal";
 import { courseForInstructor } from "@/lib/access";
 
 const MAX_SCENE_BYTES = 2_000_000; // embedded images count towards this
+// Boards live in the database, so cap how much one account can store (50 x 2 MB = 100 MB).
+const MAX_BOARDS_PER_USER = 50;
 
 export async function createBoard(formData: FormData) {
   const user = await requireUser();
+  if ((await db.$count(schema.boards, eq(schema.boards.ownerId, user.id))) >= MAX_BOARDS_PER_USER) {
+    redirect(`/${user.role}/boards?limit=1`);
+  }
   const title = z.string().trim().min(1).max(80).catch("Untitled board").parse(formData.get("title"));
   const [board] = await db
     .insert(schema.boards)

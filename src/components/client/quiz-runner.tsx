@@ -91,7 +91,7 @@ export function QuizRunner({ quizId, questions, endsAtMs, serverNowMs, totalMs }
           <span>Question {index + 1} of {questions.length}</span>
           <span className="hidden items-center gap-1 text-xs sm:flex"><Keyboard className="size-3.5" /> 1–{q.options.length} to answer · ← → to move</span>
         </div>
-        <h2 key={q.id} className="mt-3 text-lg font-medium leading-snug animate-fade-in">{q.prompt}</h2>
+        <h2 key={q.id} className="mt-3 text-lg font-medium leading-snug">{q.prompt}</h2>
         <fieldset className="mt-5 grid gap-2" disabled={submitting}>
           <legend className="sr-only">Options</legend>
           {q.options.map((opt, k) => {
@@ -99,7 +99,7 @@ export function QuizRunner({ quizId, questions, endsAtMs, serverNowMs, totalMs }
             return (
               <label
                 key={`${q.id}-${k}`}
-                className={`flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 text-sm transition animate-fade-in has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent ${
+                className={`flex cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 text-sm transition has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent ${
                   isPicked ? "border-accent bg-accent/10 shadow-sm" : "border-border hover:border-muted hover:bg-surface-2"
                 }`}
               >

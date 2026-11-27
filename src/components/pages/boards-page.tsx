@@ -38,8 +38,9 @@ export async function BoardsPage({ role }: { role: "instructor" | "student" }) {
       <Card className="mb-6">
         <form action={createBoard} className="flex flex-wrap gap-2">
           <Input name="title" placeholder="New board title, e.g. Binary search trees" maxLength={80} className="max-w-md flex-1" />
-          <Button><Plus className="size-4" /> New board</Button>
+          <Button disabled={mine.length >= 50}><Plus className="size-4" /> New board</Button>
         </form>
+        {mine.length >= 50 && <p className="mt-2 text-sm text-muted">You have 50 boards, the maximum. Delete one to create another.</p>}
       </Card>
       <h2 className="mb-3 text-sm font-semibold text-muted">My boards</h2>
       {mine.length ? grid(mine) : <Empty icon={<PenTool />}>No boards yet. Create one above.</Empty>}
