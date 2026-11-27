@@ -3,10 +3,11 @@
 import { Eye, PencilLine } from "lucide-react";
 import { useState, useTransition } from "react";
 import { createAssignment } from "@/app/actions/instructor";
+import { Markdown } from "@/components/markdown";
 import { Button, Card, Field, FormMessage, Input, Select, Textarea } from "@/components/ui";
 
-/** Assignment editor with a live Markdown preview (rendered on the server by the page). */
-export function AssignmentBuilder({ courseId, sections, preview }: { courseId: string; sections: { id: string; title: string }[]; preview: (text: string) => React.ReactNode }) {
+/** Assignment editor with a live Markdown preview (same renderer students see). */
+export function AssignmentBuilder({ courseId, sections }: { courseId: string; sections: { id: string; title: string }[] }) {
   const [error, setError] = useState<string>();
   const [text, setText] = useState("");
   const [tab, setTab] = useState<"write" | "preview">("write");
@@ -47,7 +48,7 @@ export function AssignmentBuilder({ courseId, sections, preview }: { courseId: s
             {tab === "write" ? (
               <Textarea value={text} onChange={(e) => setText(e.target.value)} rows={14} required maxLength={20000} placeholder={"### Objective\nImplement…\n\n### Deliverables\n- Source code (.zip)\n- A short report (PDF)"} className="font-mono text-xs" />
             ) : (
-              <div className="min-h-64 rounded-xl border border-border p-4 text-sm">{text.trim() ? preview(text) : <p className="text-muted">Nothing to preview.</p>}</div>
+              <div className="min-h-64 rounded-xl border border-border p-4 text-sm">{text.trim() ? <Markdown text={text} /> : <p className="text-muted">Nothing to preview.</p>}</div>
             )}
             <p className="mt-1 text-xs text-muted">Markdown: ### headings, **bold**, *italic*, `code`, lists and [links](https://…).</p>
           </div>

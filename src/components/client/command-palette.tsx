@@ -75,9 +75,13 @@ export function CommandPalette({ links }: { links: NavItem[] }) {
               setActive(0);
             }}
             onKeyDown={(e) => {
-              if (e.key === "ArrowDown") (e.preventDefault(), setActive((a) => Math.min(a + 1, entries.length - 1)));
-              else if (e.key === "ArrowUp") (e.preventDefault(), setActive((a) => Math.max(a - 1, 0)));
-              else if (e.key === "Enter") go(entries[active]);
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setActive((a) => Math.min(a + 1, entries.length - 1));
+              } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setActive((a) => Math.max(a - 1, 0));
+              } else if (e.key === "Enter") go(entries[active]);
               else if (e.key === "Escape") setOpen(false);
             }}
             placeholder="Search pages and courses…"

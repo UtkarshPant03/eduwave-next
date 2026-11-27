@@ -83,7 +83,7 @@ export async function deleteThread(threadId: string) {
   const { user, thread, course, manager } = await threadFor(threadId);
   if (!manager && thread.authorId !== user.id) return;
   await db.delete(schema.threads).where(eq(schema.threads.id, thread.id));
-  redirect(`/${user.role === "student" ? "student" : "instructor"}/courses/${course.id}?tab=discussions`);
+  redirect(`/${user.role === "student" ? "student" : "instructor"}/courses/${course.id}#discussions`);
 }
 
 export async function deletePost(threadId: string, postId: string) {

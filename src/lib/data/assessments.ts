@@ -10,7 +10,7 @@ import type { CurrentUser } from "@/lib/auth/dal";
 import { courseForInstructor, courseForStudent } from "@/lib/access";
 import { finalizeIfExpired } from "@/lib/quiz-engine";
 
-const { users, quizzes, questions, attempts, answers, assignments, submissions, files, enrollments } = schema;
+const { users, questions, attempts, answers, assignments, submissions, files, enrollments } = schema;
 
 /* =============================== quizzes =============================== */
 

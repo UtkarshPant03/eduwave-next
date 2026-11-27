@@ -36,8 +36,7 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   });
   // A deactivated account loses access immediately, even with a valid session.
   if (!user || !user.active) return null;
-  const { active: _active, ...rest } = user;
-  return rest;
+  return { id: user.id, name: user.name, email: user.email, role: user.role, mustChangePassword: user.mustChangePassword };
 });
 
 export const homeFor = (user: Pick<CurrentUser, "role">) => `/${user.role}`;

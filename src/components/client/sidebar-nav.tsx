@@ -39,14 +39,13 @@ const ICONS = {
 export type NavItem = { href: string; label: string; icon: keyof typeof ICONS; group?: string };
 
 function NavLinks({ links, pathname, onNavigate }: { links: NavItem[]; pathname: string | null; onNavigate?: () => void }) {
-  let lastGroup: string | undefined;
   return (
     <ul className="grid gap-0.5">
-      {links.map((l) => {
+      {links.map((l, i) => {
         const Icon = ICONS[l.icon];
         const active = pathname != null && (pathname === l.href || (l.href.split("/").length > 2 && pathname.startsWith(l.href)));
-        const heading = l.group && l.group !== lastGroup ? l.group : null;
-        lastGroup = l.group;
+        // Show a group heading when the group changes from the previous link.
+        const heading = l.group && l.group !== links[i - 1]?.group ? l.group : null;
         return (
           <li key={l.href}>
             {heading && <p className="mb-1 mt-4 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted/80">{heading}</p>}

@@ -43,9 +43,11 @@ export default function LoginPage() {
               <Field label="Email or student ID">
                 <Input name="identifier" autoComplete="username" required autoFocus placeholder="name@university.edu or 22CS1043" />
               </Field>
-              <Field label="Password">
-                <PasswordInput name="password" autoComplete="current-password" required />
-              </Field>
+              {/* Not wrapped in <Field>/<label>: the show-password button must not become part of the input's label. */}
+              <div className="grid gap-1.5 text-sm">
+                <label htmlFor="password" className="font-medium">Password</label>
+                <PasswordInput id="password" name="password" autoComplete="current-password" required />
+              </div>
             </ActionForm>
           </div>
           <p className="mt-6 text-center text-xs text-muted">
