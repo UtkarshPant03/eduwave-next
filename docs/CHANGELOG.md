@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.0.2: audit and baseline (2026-11-27)
+
+- **Audit documents:** `PRODUCT_VISION`, `REPOSITORY_AUDIT`, `FEATURE_INVENTORY`, `MOODLE_CAPABILITY_MATRIX` (checked against docs.moodle.org 5.3), `SECURITY_REVIEW` and `IMPLEMENTATION_ROADMAP`. ARCHITECTURE gains a target module map.
+- **Cleanups:** removed unused `liveSessionsFor()` and `ProgressChart`; course colour swatches are now solid (no gradient); AI prompts address university students.
+- **Unit tests:** new `test:unit` suite (21 checks, Node's built-in runner, no new dependency), run in CI.
+
 ## 4.0.1: stabilisation (2026-11-27)
 
 **CI**

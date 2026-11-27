@@ -7,6 +7,7 @@ All tests use free tools: Playwright driving an installed browser (Edge by defau
 | Command | What it proves | Checks |
 |---|---|---|
 | `npm run lint`, `npm run typecheck`, `npm run build` | Static correctness; the production build compiles | n/a |
+| `npm run test:unit` | Pure logic: grade bands and rounding, totals, submission windows, quiz timing and grace, shuffling, upload validation (PDF, OOXML, WebP, text), download disposition, CSV formula escaping and filenames | 21 |
 | `npm run test:db` | Database-enforced integrity (cross-course and cross-quiz references, value ranges, grade limits, frozen answers and questions, completion-tick validity, append-only history, RESTRICT deletes) plus **real concurrency** between answer saving and finalisation | 22 |
 | `npm run test:e2e` | Full course lifecycle for all three roles, plus core security (headers, redirects, cross-user access, grading limits, deactivation, lockout) | 42 |
 | `npm run test:stability` | Data safety: graded work can't be deleted, edit rules, the quiz timer auto-submits, abandoned attempts are closed, email delivery, malformed URLs | 15 |

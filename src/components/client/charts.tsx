@@ -13,9 +13,6 @@ import {
   BarChart,
   CartesianGrid,
   LabelList,
-  Legend,
-  Line,
-  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -72,35 +69,6 @@ export function SubjectBars({ data }: { data: { subject: string; averagePercent:
             <LabelList dataKey="averagePercent" position="right" fill="var(--muted)" fontSize={11} formatter={(v) => `${Math.round(Number(v))}%`} />
           </Bar>
         </BarChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}
-
-/** Student's score per quiz over time vs the class average on the same quiz (two series). */
-export function ProgressChart({ data }: { data: { quiz: string; you: number; classAverage: number | null }[] }) {
-  const last = data.length - 1;
-  const endLabel = (name: string) =>
-    function EndLabel(props: { x?: number | string; y?: number | string; index?: number }) {
-      if (props.index !== last) return null;
-      return (
-        <text x={Number(props.x) + 8} y={Number(props.y) + 4} fontSize={11} fill="var(--muted)">
-          {name}
-        </text>
-      );
-    };
-  return (
-    <div className="h-64" role="img" aria-label="Your score per quiz compared with the class average. The same data is in the history table.">
-      <ResponsiveContainer>
-        <LineChart data={data} margin={{ top: 12, right: 64, bottom: 0, left: -20 }}>
-          <CartesianGrid vertical={false} stroke="var(--chart-grid)" />
-          <XAxis dataKey="quiz" {...axis} interval="preserveStartEnd" />
-          <YAxis domain={[0, 100]} unit="%" {...axis} />
-          <Tooltip content={<TooltipBox unit="%" />} cursor={{ stroke: "var(--border)" }} />
-          <Legend verticalAlign="top" height={28} iconType="plainline" wrapperStyle={{ fontSize: 12, color: "var(--muted)" }} />
-          <Line type="monotone" dataKey="you" name="You" stroke="var(--series-1)" strokeWidth={2} dot={{ r: 4, strokeWidth: 2, fill: "var(--surface)" }} activeDot={{ r: 5 }} animationDuration={500} label={endLabel("You")} />
-          <Line type="monotone" dataKey="classAverage" name="Class average" stroke="var(--series-2)" strokeWidth={2} strokeDasharray="5 4" dot={{ r: 4, strokeWidth: 2, fill: "var(--surface)" }} connectNulls animationDuration={500} label={endLabel("Class avg")} />
-        </LineChart>
       </ResponsiveContainer>
     </div>
   );

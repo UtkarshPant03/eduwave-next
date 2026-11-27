@@ -13,6 +13,7 @@
     "db:backup": "tsx scripts/backup.ts",
     "db:restore": "tsx scripts/restore.ts",
     "typecheck": "next typegen && tsc --noEmit",
+    "test:unit": "tsx --conditions=react-server --test tests/unit/logic.test.ts",
     "postinstall": "node scripts/copy-excalidraw-assets.mjs",
     "test:e2e": "node tests/e2e.mjs",
     "test:db": "tsx --conditions=react-server tests/db-integrity.ts",

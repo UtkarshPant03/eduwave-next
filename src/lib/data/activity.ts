@@ -2,7 +2,7 @@
  * Time-based views: calendar events and "what's due" lists.
  */
 import "server-only";
-import { and, asc, eq, gte, inArray, lte } from "drizzle-orm";
+import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import { db, schema } from "@/db";
 
 const { assignments, quizzes, liveSessions, courses, submissions, attempts } = schema;
@@ -56,21 +56,3 @@ export async function calendarEvents(courseIds: string[], from: Date, to: Date, 
   ].sort((x, y) => x.at.getTime() - y.at.getTime());
 }
 
-export function liveSessionsFor(courseIds: string[], from: Date) {
-  if (!courseIds.length) return Promise.resolve([]);
-  return db
-    .select({
-      id: liveSessions.id,
-      title: liveSessions.title,
-      startsAt: liveSessions.startsAt,
-      durationMinutes: liveSessions.durationMinutes,
-      room: liveSessions.room,
-      courseId: courses.id,
-      courseCode: courses.code,
-      color: courses.color,
-    })
-    .from(liveSessions)
-    .innerJoin(courses, eq(courses.id, liveSessions.courseId))
-    .where(and(inArray(liveSessions.courseId, courseIds), gte(liveSessions.startsAt, from)))
-    .orderBy(asc(liveSessions.startsAt));
-}

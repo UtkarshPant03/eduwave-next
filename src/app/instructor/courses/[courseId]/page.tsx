@@ -166,8 +166,8 @@ export default async function InstructorCoursePage({ params }: PageProps<"/instr
                         <label key={c} className="cursor-pointer">
                           <input type="radio" name="color" value={c} defaultChecked={course.color === c} className="peer sr-only" />
                           <span
-                            className="block size-9 rounded-xl ring-offset-2 ring-offset-surface transition peer-checked:ring-2 peer-checked:ring-accent peer-focus-visible:ring-2 peer-focus-visible:ring-accent"
-                            style={{ background: `linear-gradient(135deg, ${coverFor(c).from}, ${coverFor(c).to})` }}
+                            className="block size-9 rounded-lg ring-offset-2 ring-offset-surface transition peer-checked:ring-2 peer-checked:ring-accent peer-focus-visible:ring-2 peer-focus-visible:ring-accent"
+                            style={{ background: coverFor(c).from }}
                             title={c}
                           />
                           <span className="sr-only">{c}</span>

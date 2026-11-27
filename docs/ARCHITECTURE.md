@@ -48,3 +48,24 @@ Browser ──HTTPS──▶ reverse proxy (Caddy/Nginx) ──▶ Next.js serve
 | PGlite for development | Zero-install teaching labs | One process per data directory; never allowed in production. |
 | Partial prerendering (`cacheComponents`) | Fast navigation; static shells | `notFound()` inside a streamed page returns HTTP 200 with `noindex`; the CSP needs `'unsafe-inline'` (see `docs/SECURITY.md`). |
 | Database-level integrity | Rules hold regardless of code paths | Schema changes need hand-checked migrations (`docs/DATABASE.md`). |
+
+## Target module boundaries (modular monolith)
+
+eduWave stays **one deployable application**. Code is organised progressively into domain modules, each owning its schema tables, read queries, Server Actions and authorisation rules. Today, actions are grouped by role (`actions/instructor.ts` spans six domains).
+
+| Domain | Today | Target location |
+|---|---|---|
+| Identity & access | `lib/auth/*`, `actions/auth.ts`, `access.ts` | `modules/identity` (+ capability map, `can()`) |
+| Institution (departments … sections) | — | `modules/institution` (Phase 2) |
+| Courses & content | `actions/instructor.ts` (sections, resources, enrolment), `lib/data/courses.ts` | `modules/courses` |
+| Assignments | `actions/instructor.ts` + `student.ts` | `modules/assignments` |
+| Assessments (quizzes, question bank) | `actions/*`, `quiz-engine.ts`, `data/assessments.ts` | `modules/assessments` |
+| Gradebook | `grading.ts`, `data/gradebook.ts` | `modules/gradebook` |
+| Attendance | — | `modules/attendance` (Phase 3) |
+| Communication | `actions/community.ts`, `notify.ts` | `modules/communication` |
+| Live classroom / whiteboard | `live.ts`, `actions/boards.ts` | `modules/classroom` |
+| AI | `lib/ai.ts`, `api/ai/chat` | `modules/ai` (service interface; Ollama adapter) |
+
+**Moving code.** A domain moves when it is next changed for a feature, with its tests. There is no big-bang refactor, and each move keeps the public action names, so the UI and tests don't change.
+
+**Rule.** A module may call another module only through its exported functions. Pages never query tables directly; they use the module's read functions.

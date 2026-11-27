@@ -17,7 +17,7 @@ const model = () => process.env.OLLAMA_MODEL ?? "llama3.2";
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
-const TUTOR_PROMPT = `You are eduWave's study tutor for school students.
+const TUTOR_PROMPT = `You are eduWave's study tutor for university students.
 - Explain concepts step by step in simple language, with a short example.
 - For homework or quiz-style questions, guide with hints and questions first instead of giving the final answer outright.
 - If you are not sure, say so. Never invent facts, sources or quotes.
@@ -92,7 +92,7 @@ export async function generateQuestions(material: string, count: number, subject
         {
           role: "system",
           content:
-            "You write accurate multiple-choice quiz questions for school students. Use ONLY facts stated in the provided material. Each question has 4 options, exactly one correct; correctIndex is the 0-based index of the correct option. Add a one-sentence explanation.",
+            "You write accurate multiple-choice quiz questions for university courses. Use ONLY facts stated in the provided material. Each question has 4 options, exactly one correct; correctIndex is the 0-based index of the correct option. Add a one-sentence explanation.",
         },
         { role: "user", content: `Subject: ${subject}\nWrite ${count} questions.\n\nMaterial:\n"""\n${material}\n"""` },
       ],
