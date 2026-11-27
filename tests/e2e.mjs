@@ -226,7 +226,8 @@ try {
 
   // Calendar
   await page.goto(`${BASE}/student/calendar`);
-  check("calendar lists the new assignment", await seen(page.getByText(`Lab ${run}`)));
+  // The month renders as a grid (desktop) and an agenda (phones); check the visible one.
+  check("calendar lists the new assignment", await seen(page.getByText(`Lab ${run}`).filter({ visible: true })));
 
   // Security: student can't reach instructor pages or exports
   const exp = await page.request.get(`${courseUrl}/gradebook/export`);
@@ -305,7 +306,8 @@ try {
   await signIn(studentPage, SID, "correct horse battery");
   check("deactivated user can't sign in", await seen(studentPage.getByText("Incorrect email/ID or password.")));
   await page.goto(`${BASE}/admin/audit`);
-  check("audit log records the deactivation", await seen(page.getByText("user deactivated")));
+  // A table cell, not the identically-named option of the event filter.
+  check("audit log records the deactivation", await seen(page.getByRole("cell", { name: "user deactivated" })));
   await page.context().close();
   await studentPage.context().close();
 

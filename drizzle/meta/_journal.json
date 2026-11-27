@@ -15,6 +15,13 @@
       "when": 1795761115943,
       "tag": "0001_integrity",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795764427621,
+      "tag": "0002_completions_integrity",
+      "breakpoints": true
     }
   ]
 }

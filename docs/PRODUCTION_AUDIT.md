@@ -69,39 +69,47 @@ exactly one attempt (enforced by a unique constraint); there is no password-rese
 | DB-05 | Medium | **Grading and resubmission race.** A resubmission can overwrite work that was just graded, and a grade can land on a version the grader never saw. | `actions/student.ts:78`, `actions/instructor.ts` | **Fixed** |
 | DB-06 | Medium | **Submission file replacement isn't transactional,** so files can be orphaned or lost. | `actions/student.ts:85` | **Fixed** |
 | DB-07 | Medium | **`deleteActivity` count-then-delete can still cascade-delete student work.** The foreign keys are `ON DELETE CASCADE`. | `actions/instructor.ts`, `schema.ts` | **Fixed** (RESTRICT + tx) |
-| DB-08 | Medium | **Cross-course and cross-quiz rules are enforced only in app code.** `section_id` isn't tied to the same course, `answers` isn't tied to the attempt's quiz, `completions.item_id` has no foreign key (orphans can push progress above 100%), and resources' "url or file" isn't enforced. | `schema.ts` | **Fixed** except completions.item_id (no FK; cleaned on delete) *Deferred* |
+| DB-08 | Medium | **Cross-course and cross-quiz rules are enforced only in app code.** `section_id` isn't tied to the same course, `answers` isn't tied to the attempt's quiz, `completions.item_id` has no foreign key (orphans can push progress above 100%), and resources' "url or file" isn't enforced. | `schema.ts` | **Fixed** (4.0.1: completion ticks validated + cleaned by triggers, migration 0002; db-integrity) |
 | DB-09 | Medium | **No CHECK constraints.** Grades ≥ 0, score ≤ total, valid answer indexes, positive points and time limits, and so on are enforced only by Zod. | `schema.ts` | **Fixed** (db-integrity) |
 | DB-10 | Medium | **Missing indexes** on foreign-key and hot paths: `answers(question_id)`, `resources(file_id)`, `submissions(file_id)`, section ids, calendar ranges, unread notifications, ungraded submissions, announcements. | `schema.ts` | **Fixed** |
 | DB-11 | Low | **Grading-policy inconsistencies.** The letter grade comes from the unrounded % while the UI shows the rounded value; work is marked "missing" while the late window is still open. | `lib/grading.ts`, `lib/data/gradebook.ts` | **Fixed** |
 | DB-12 | Low | **Audit-log weaknesses.** Rows cascade-delete with the user. Admin actions are attributed to the target, with the admin named only by email in free text. Audit writes run outside the action's transaction. | `schema.ts`, `actions/admin.ts` | **Partly fixed**: actor_id, RESTRICT, append-only; audit writes still outside the action transaction |
-| DB-13 | Low | **Other edge cases.** `addSection` position race; the app clock and the DB clock are mixed in quiz timing; the answer key is revealed during the 10-second grace period after the deadline; unenrolling a student hides their grades from exports. | various | **Partly fixed**: answer-key grace fixed; addSection race and exports of unenrolled students *Deferred*; clock skew *Accepted* |
+| DB-13 | Low | **Other edge cases.** `addSection` position race; the app clock and the DB clock are mixed in quiz timing; the answer key is revealed during the 10-second grace period after the deadline; unenrolling a student hides their grades from exports. | various | **Partly fixed**: answer-key grace and section-position race (course row lock) fixed; exports of unenrolled students *Deferred*; clock skew *Accepted* |
 
 ## 4. Performance findings (summary)
 
 | ID | Finding | Status |
 |---|---|---|
-| PERF-01 | The student grades page runs the whole course gradebook (all students) once per course: N+1, filtered in JavaScript. | **Partly fixed**: student filtered in SQL; still one query set per course |
+| PERF-01 | The student grades page runs the whole course gradebook (all students) once per course: N+1, filtered in JavaScript. | **Partly fixed**: student filtered in SQL; expired-attempt sweep scoped to the student; still one query set per course |
 | PERF-02 | The gradebook does `find()` inside students × items loops (quadratic) and selects large text columns it doesn't need. | **Fixed** |
 | PERF-03 | The instructor course page loads all five tabs (~20 queries) on every visit and after every action. | *Deferred* |
 | PERF-04 | File downloads read the blob before authorizing the request. | **Fixed** |
-| PERF-05 | Unbounded lists with no pagination: users (capped at 500), audit log (fixed at 200), admin courses, catalogue, threads, replies, participants, grading page. | *Deferred*: pagination not yet added |
-| PERF-06 | Bulk enrolment and CSV import run row by row (thousands of sequential queries). | **Fixed** for enrolment; CSV user import still sequential *Deferred* |
-| PERF-07 | Notification polling makes 4 queries per tab every 30 s; admin stats run 6 full-table counts on each load. | **Partly fixed**: admin stats one query; polling unchanged |
-| PERF-08 | Calendar and command palette use heavy listing queries just to get course ids. | **Partly fixed**: calendar fixed; palette *Deferred* |
+| PERF-05 | Unbounded lists with no pagination: users (capped at 500), audit log (fixed at 200), admin courses, catalogue, threads, replies, participants, grading page. | **Partly fixed** (4.0.1): users and audit log paginated (50/page, exact totals, audit filter); catalogue, discussions, participants, gradebook still unpaginated *Deferred* |
+| PERF-06 | Bulk enrolment and CSV import run row by row (thousands of sequential queries). | **Fixed** for enrolment; CSV import validates all rows, detects in-file duplicates, one existence query, batched inserts (hashing remains ~0.25 s/user by design) |
+| PERF-07 | Notification polling makes 4 queries per tab every 30 s; admin stats run 6 full-table counts on each load. | **Fixed** (4.0.1): bell polls a 2-query summary; full list only on change or open; paused when hidden; admin stats one query |
+| PERF-08 | Calendar and command palette use heavy listing queries just to get course ids. | **Fixed** (4.0.1): calendar uses ids only; palette uses a capped 4-column query |
 
 ## 5. UI/UX findings (summary)
 
 | ID | Finding | Status |
 |---|---|---|
 | UI-01 | **"AI-generated" look**, built mostly from six global primitives (`.bg-brand`, `.text-gradient`, `.bg-mesh`, `.bg-dots`, `.card-hover`, `.stagger`): gradient buttons, gradient course covers and hero, glass header, fade-in on every card, an uppercase eyebrow on every header, emoji and playful copy, confetti. | **Fixed** (tokens, primitives, landing, login, shell) |
-| UI-02 | **No consistent design system:** three different primary-button styles, seven border radii, arbitrary font sizes, two greens, five widths for the right-hand column, and two kinds of empty state. | **Partly fixed**: shared tokens/radii/primitives; some one-off page classes remain |
+| UI-02 | **No consistent design system:** three different primary-button styles, seven border radii, arbitrary font sizes, two greens, five widths for the right-hand column, and two kinds of empty state. | **Partly fixed**: shared tokens/radii/primitives; form controls now honour caller widths; some one-off page classes remain |
 | UI-03 | **Fabricated content on the landing page:** a mock dashboard with invented student, courses and percentages, and a promise of a "class average" chart that is never rendered. | **Fixed** |
 | UI-04 | **Misleading dashboard numbers:** admin "Submissions" counts quizzes still in progress; Students/Instructors include deactivated accounts; "failed sign-ins" covers only the last 12 rows; instructor "Students" double-counts. | **Fixed** |
 | UI-05 | **Dead ends:** "Forgot password?" goes nowhere, there is no admin course detail page (the palette entries all point to one list), notifications without a link use `href="#"`, and there is no full notifications page. | **Partly fixed**: dead notification links fixed ("Forgot password" is guidance text, not a link); admin course detail page and full notifications page *Deferred* |
-| UI-06 | **Mobile:** the calendar month grid is unreadable at 375 px; many touch targets are smaller than 40 px; the delete button on to-do items only appears on hover. | *Deferred*: mobile calendar agenda view; targets meet the WCAG 2.2 AA 24px minimum but some are below 40px |
+| UI-06 | **Mobile:** the calendar month grid is unreadable at 375 px; many touch targets are smaller than 40 px; the delete button on to-do items only appears on hover. | **Partly fixed** (4.0.1): phone calendar is an agenda list with 44px rows; some secondary controls remain below 40px (above the WCAG 2.2 AA 24px minimum) |
 | UI-07 | **No search, sort or pagination** on the gradebook, the audit log, admin courses, discussions or participants. | *Deferred* |
 
-## 6. Testing and deployment gaps
+## 6. Follow-up review (4.0.1, 2026-11-27)
+
+- **CI-01 (High, release-blocking): CI typecheck failed on every clean checkout.**
+  - *Root cause:* `PageProps`, `LayoutProps` and `RouteContext` are global types that Next.js generates into `.next/types` during `next dev`, `next build` or `next typegen`. CI ran `tsc --noEmit` before any of them, and the git-ignored `next-env.d.ts` was missing too. Local runs passed only because `.next/` was left over from earlier builds.
+  - *Fix:* `typecheck` is now `next typegen && tsc --noEmit`, the approach the Next.js docs give for CI. Reproduced locally with a clean state (27 errors) and verified after the fix (0).
+  - **Fixed.**
+- **Security re-verified in code:** Server Action authorization, ownership, isolation, file ACL, temporary-password gate, session rotation, lockout, trusted proxy, AI limits, moderation, CSV exports and environment validation. The suites `test:security` (10/10) and `test:e2e` (42/42) pass.
+
+## 7. Testing and deployment gaps (original audit)
 
 - **No CI.** Tests only run when someone runs them by hand.
 - **No unit or integration tests** for concurrency (quiz races, double submission).

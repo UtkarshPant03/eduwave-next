@@ -3,7 +3,7 @@
 import { randomBytes } from "node:crypto";
 import { redirect } from "next/navigation";
 import { refresh } from "next/cache";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/db";
 import { courseForInstructor } from "@/lib/access";
@@ -25,6 +25,14 @@ const optionalUuid = z
   .optional()
   .transform((s) => s || null)
   .pipe(z.uuid().nullable());
+
+/**
+ * Serialises structural changes to one course (sections): concurrent "add section" calls
+ * would otherwise compute the same next position. Call inside a transaction.
+ */
+async function lockCourse(tx: Pick<typeof db, "select">, courseId: string) {
+  await tx.select({ id: schema.courses.id }).from(schema.courses).where(eq(schema.courses.id, courseId)).for("update");
+}
 
 /** Authorise: signed-in instructor who owns this course. Every action starts here. */
 async function ownCourse(courseId: unknown) {
@@ -77,11 +85,14 @@ export async function addSection(_: FormState, formData: FormData): Promise<Form
     .object({ title: z.string().trim().min(1, "Enter a section title.").max(120), summary: z.string().trim().max(1000).optional() })
     .safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: firstIssue(parsed.error) };
-  const [{ next }] = await db
-    .select({ next: sql<number>`coalesce(max(${schema.sections.position}) + 1, 0)`.mapWith(Number) })
-    .from(schema.sections)
-    .where(eq(schema.sections.courseId, course.id));
-  await db.insert(schema.sections).values({ courseId: course.id, position: next, title: parsed.data.title, summary: parsed.data.summary || null });
+  await db.transaction(async (tx) => {
+    await lockCourse(tx, course.id);
+    const [{ next }] = await tx
+      .select({ next: sql<number>`coalesce(max(${schema.sections.position}) + 1, 0)`.mapWith(Number) })
+      .from(schema.sections)
+      .where(eq(schema.sections.courseId, course.id));
+    await tx.insert(schema.sections).values({ courseId: course.id, position: next, title: parsed.data.title, summary: parsed.data.summary || null });
+  });
   refresh();
   return { success: "Section added." };
 }
@@ -96,15 +107,25 @@ export async function updateSection(courseId: string, sectionId: string, title: 
   refresh();
 }
 
-export async function moveSection(courseId: string, sectionId: string, dir: -1 | 1) {
+export async function moveSection(courseId: string, sectionId: string, direction: -1 | 1) {
   const { course } = await ownCourse(courseId);
-  const all = await db.query.sections.findMany({ where: (s, { eq }) => eq(s.courseId, course.id), orderBy: (s, { asc }) => asc(s.position) });
-  const i = all.findIndex((s) => s.id === sectionId);
-  const j = i + dir;
-  if (i < 0 || j < 0 || j >= all.length) return;
+  const dir = z.union([z.literal(-1), z.literal(1)]).parse(direction);
   await db.transaction(async (tx) => {
-    await tx.update(schema.sections).set({ position: all[j].position }).where(eq(schema.sections.id, all[i].id));
-    await tx.update(schema.sections).set({ position: all[i].position }).where(eq(schema.sections.id, all[j].id));
+    await lockCourse(tx, course.id);
+    // Read inside the lock, in a stable order (id breaks ties left by older duplicate positions).
+    const all = await tx
+      .select({ id: schema.sections.id })
+      .from(schema.sections)
+      .where(eq(schema.sections.courseId, course.id))
+      .orderBy(asc(schema.sections.position), asc(schema.sections.id));
+    const i = all.findIndex((s) => s.id === sectionId);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= all.length) return;
+    [all[i], all[j]] = [all[j], all[i]];
+    // Renumber 0..n-1: swaps always take effect, and any duplicate positions are repaired.
+    for (const [position, s] of all.entries()) {
+      await tx.update(schema.sections).set({ position }).where(eq(schema.sections.id, s.id));
+    }
   });
   refresh();
 }
@@ -112,7 +133,10 @@ export async function moveSection(courseId: string, sectionId: string, dir: -1 |
 export async function deleteSection(courseId: string, sectionId: string) {
   const { course } = await ownCourse(courseId);
   // Activities in the section move to "General" (FK is ON DELETE SET NULL), nothing is lost.
-  await db.delete(schema.sections).where(and(eq(schema.sections.id, uuid.parse(sectionId)), eq(schema.sections.courseId, course.id)));
+  await db.transaction(async (tx) => {
+    await lockCourse(tx, course.id);
+    await tx.delete(schema.sections).where(and(eq(schema.sections.id, uuid.parse(sectionId)), eq(schema.sections.courseId, course.id)));
+  });
   refresh();
 }
 

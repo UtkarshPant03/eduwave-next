@@ -20,7 +20,7 @@ const DAY = 86_400_000;
 
 export async function gradebook(courseId: string, onlyStudentId?: string) {
   // Abandoned quiz attempts must count with the score they earned, not as "missing".
-  await finalizeExpiredAttempts({ courseId });
+  await finalizeExpiredAttempts(onlyStudentId ? { studentId: onlyStudentId } : { courseId });
   const now = Date.now();
   const [asg, qz, qCounts, students] = await Promise.all([
     // Only the columns needed (instructions can be 20 KB each).

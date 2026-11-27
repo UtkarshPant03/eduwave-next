@@ -4,6 +4,8 @@
 import "server-only";
 import { and, asc, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
 import { db, schema } from "@/db";
+import { alias } from "drizzle-orm/pg-core";
+import { PAGE_SIZE } from "@/components/ui";
 import { countOf, outer } from "./sql";
 
 const { users, courses, enrollments, auditLog, submissions, attempts } = schema;
@@ -29,14 +31,18 @@ export async function siteStats() {
   return row;
 }
 
-export function listUsers(filter: { q?: string; role?: string }) {
+/** One page of users matching the filters, plus the total (for the pager). */
+export async function listUsers(filter: { q?: string; role?: string; page?: number }) {
   const conds: SQL[] = [];
   if (filter.role && ["admin", "instructor", "student"].includes(filter.role)) conds.push(eq(users.role, filter.role as "admin"));
   if (filter.q) {
     const like = `%${filter.q.replace(/[%_]/g, "")}%`;
     conds.push(or(ilike(users.name, like), ilike(users.email, like), ilike(users.studentId, like))!);
   }
-  return db
+  const where = conds.length ? and(...conds) : undefined;
+  const page = filter.page ?? 1;
+  const [rows, total] = await Promise.all([
+    db
     .select({
       id: users.id,
       name: users.name,
@@ -50,9 +56,13 @@ export function listUsers(filter: { q?: string; role?: string }) {
       courses: countOf(sql`select count(*) from enrollments e where e.user_id = ${outer("users", "id")}`),
     })
     .from(users)
-    .where(conds.length ? and(...conds) : undefined)
-    .orderBy(asc(users.role), asc(users.name))
-    .limit(500);
+    .where(where)
+    .orderBy(asc(users.role), asc(users.name), asc(users.id))
+    .limit(PAGE_SIZE)
+    .offset((page - 1) * PAGE_SIZE),
+    db.$count(users, where),
+  ]);
+  return { rows, total };
 }
 
 export function listAllCourses() {
@@ -77,6 +87,7 @@ export function listInstructors() {
   return db.select({ id: users.id, name: users.name }).from(users).where(and(eq(users.role, "instructor"), eq(users.active, true))).orderBy(asc(users.name));
 }
 
+/** Latest audit events (dashboard preview). */
 export function siteAudit(limit = 50) {
   return db
     .select({ action: auditLog.action, detail: auditLog.detail, ip: auditLog.ip, createdAt: auditLog.createdAt, user: users.name, email: users.email })
@@ -84,4 +95,32 @@ export function siteAudit(limit = 50) {
     .leftJoin(users, eq(users.id, auditLog.userId))
     .orderBy(desc(auditLog.createdAt))
     .limit(limit);
+}
+
+/** One page of the audit log, optionally filtered by event type (uses the (action, created_at) index). */
+export async function auditPage(opts: { action?: string; page: number }) {
+  const actor = alias(users, "actor");
+  const where = opts.action ? eq(auditLog.action, opts.action) : undefined;
+  const [rows, total] = await Promise.all([
+    db
+      .select({
+        id: auditLog.id,
+        action: auditLog.action,
+        detail: auditLog.detail,
+        ip: auditLog.ip,
+        createdAt: auditLog.createdAt,
+        user: users.name,
+        email: users.email,
+        actor: actor.name,
+      })
+      .from(auditLog)
+      .leftJoin(users, eq(users.id, auditLog.userId))
+      .leftJoin(actor, eq(actor.id, auditLog.actorId))
+      .where(where)
+      .orderBy(desc(auditLog.createdAt), desc(auditLog.id))
+      .limit(PAGE_SIZE)
+      .offset((opts.page - 1) * PAGE_SIZE),
+    db.$count(auditLog, where),
+  ]);
+  return { rows, total };
 }

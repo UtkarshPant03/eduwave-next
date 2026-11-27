@@ -7,7 +7,7 @@ All tests use free tools: Playwright driving an installed browser (Edge by defau
 | Command | What it proves | Checks |
 |---|---|---|
 | `npm run lint`, `npm run typecheck`, `npm run build` | Static correctness; the production build compiles | n/a |
-| `npm run test:db` | Database-enforced integrity (cross-course and cross-quiz references, value ranges, grade limits, frozen answers and questions, append-only history, RESTRICT deletes) plus **real concurrency** between answer saving and finalisation | 19 |
+| `npm run test:db` | Database-enforced integrity (cross-course and cross-quiz references, value ranges, grade limits, frozen answers and questions, completion-tick validity, append-only history, RESTRICT deletes) plus **real concurrency** between answer saving and finalisation | 22 |
 | `npm run test:e2e` | Full course lifecycle for all three roles, plus core security (headers, redirects, cross-user access, grading limits, deactivation, lockout) | 42 |
 | `npm run test:stability` | Data safety: graded work can't be deleted, edit rules, the quiz timer auto-submits, abandoned attempts are closed, email delivery, malformed URLs | 15 |
 | `npm run test:security` | Replays the audit's attacks, including **crafted Server Action calls**: mass assignment, information leaks, privilege escalation, hidden-course leaks, fake Office files, inline student PDFs, temp-password misuse, session rotation, log hygiene, spoofed `X-Forwarded-For` | 10 |
@@ -29,7 +29,19 @@ npm run test:e2e && npm run test:stability && npm run test:security && npm run t
 
 The suites run in that order against one database. Each creates its own users and courses with unique names, so they can be re-run.
 
-## Results (2026-11-27, Windows 11, Node 22, Edge)
+## Results, 4.0.1 (2026-11-27, Windows 11, Node 22, Edge, plus GitHub Actions on Ubuntu with Chrome)
+
+| Check | Result |
+|---|---|
+| Clean state: `npm ci`, lint, `typecheck` (typegen + tsc), build, `npm audit --omit=dev` | pass, no warnings, 0 vulnerabilities |
+| test:db: fresh PGlite / PostgreSQL 18 upgrade (0001 → 0002) / fresh PostgreSQL 18 | 22/22 on each; migrating twice is a no-op |
+| test:e2e / test:stability / test:security / test:a11y (fresh sample data) | 42/42, 15/15, 10/10, no violations |
+| Production start refused: no config / sample accounts / http APP_URL / partial SMTP | refused with the specific reason each time |
+| Production start, clean PostgreSQL + https APP_URL | started |
+| PostgreSQL backup → restore into an empty database | identical counts; all 9 triggers and the migration history preserved |
+| GitHub Actions | see the latest run on the repository's Actions tab (recorded in the release notes) |
+
+### Previous results, 4.0.0
 
 | Check | Result |
 |---|---|

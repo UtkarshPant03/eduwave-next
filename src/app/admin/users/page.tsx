@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Search } from "lucide-react";
 import { UserActions, UserAdminToolbar } from "@/components/client/user-admin";
-import { Avatar, Badge, Card, Input, PageHeader, Select, Table, buttonClass } from "@/components/ui";
+import { Avatar, Badge, Card, Input, PageHeader, Pager, Select, Table, buttonClass, pageParam } from "@/components/ui";
 import { requireAdmin } from "@/lib/auth/dal";
 import { listUsers } from "@/lib/data/admin";
 import { formatRelative, requestTime } from "@/lib/format";
@@ -13,12 +13,13 @@ export default async function AdminUsersPage({ searchParams }: PageProps<"/admin
   const sp = await searchParams;
   const q = typeof sp.q === "string" ? sp.q.slice(0, 100) : "";
   const role = typeof sp.role === "string" ? sp.role : "";
-  const users = await listUsers({ q, role });
+  const page = pageParam(sp.page);
+  const { rows: users, total } = await listUsers({ q, role, page });
   const now = requestTime();
 
   return (
     <>
-      <PageHeader eyebrow="Manage" title="Users" subtitle={`${users.length} user${users.length === 1 ? "" : "s"}${q || role ? " matching your filters" : ""}`} action={<UserAdminToolbar />} />
+      <PageHeader eyebrow="Manage" title="Users" subtitle={`${total} user${total === 1 ? "" : "s"}${q || role ? " matching your filters" : ""}`} action={<UserAdminToolbar />} />
       <Card>
         {/* Plain GET form: filters live in the URL, so they're shareable and survive reloads. */}
         <form className="mb-4 flex flex-wrap gap-2" role="search">
@@ -59,6 +60,7 @@ export default async function AdminUsersPage({ searchParams }: PageProps<"/admin
             </tr>
           ))}
         </Table>
+        <Pager path="/admin/users" page={page} total={total} params={{ q, role }} />
       </Card>
     </>
   );

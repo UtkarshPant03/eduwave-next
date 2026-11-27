@@ -161,7 +161,9 @@ try {
   await anon.getByLabel("Password", { exact: true }).fill("whatever");
   await anon.getByRole("button", { name: "Sign in" }).click();
   await anon.getByText("Incorrect email/ID or password.").waitFor();
-  await admin.goto(`${BASE}/admin/audit`);
+  await admin.goto(`${BASE}/admin/audit?action=login_failed`);
+  // The table streams in after the page shell: wait for it before reading the text.
+  await admin.getByRole("cell", { name: "unknown account" }).first().waitFor({ timeout: 10000 }).catch(() => {});
   const auditText = await admin.locator("main").innerText();
   check("SEC-12 what was typed for an unknown account is not stored", !auditText.includes(secretLooking) && auditText.includes("unknown account"));
   check("SEC-03 a client-supplied X-Forwarded-For is not trusted", !auditText.includes("6.6.6.6"));

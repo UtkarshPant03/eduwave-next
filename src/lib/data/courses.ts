@@ -22,7 +22,9 @@ const activityCount = countOf(sql`
 /** Activities a given student has completed in the outer course. */
 const doneCount = (userId: string) =>
   countOf(sql`
-  (select count(*) from completions c where c.course_id = ${outer("courses", "id")} and c.user_id = ${userId}) +
+  (select count(*) from completions c where c.course_id = ${outer("courses", "id")} and c.user_id = ${userId}
+     -- only ticks whose item still exists (rows from before migration 0002 may be orphaned)
+     and (exists (select 1 from resources r where r.id = c.item_id) or exists (select 1 from live_sessions l where l.id = c.item_id))) +
   (select count(*) from attempts at join quizzes q on q.id = at.quiz_id
      where q.course_id = ${outer("courses", "id")} and at.student_id = ${userId} and at.submitted_at is not null) +
   (select count(*) from submissions s join assignments a on a.id = s.assignment_id
@@ -171,4 +173,22 @@ export async function courseOutline(courseId: string, studentId?: string): Promi
 
 export function listSections(courseId: string) {
   return db.select({ id: sections.id, title: sections.title, position: sections.position }).from(sections).where(eq(sections.courseId, courseId)).orderBy(asc(sections.position));
+}
+
+/**
+ * Lightweight course list for the command palette: just what a search entry needs
+ * (no per-course statistics), scoped to what the user may open, capped at 100.
+ */
+export function paletteCourses(user: { id: string; role: "admin" | "instructor" | "student" }) {
+  const cols = { id: courses.id, code: courses.code, title: courses.title, term: courses.term };
+  const base = db.select(cols).from(courses);
+  const q =
+    user.role === "student"
+      ? base
+          .innerJoin(enrollments, and(eq(enrollments.courseId, courses.id), eq(enrollments.userId, user.id)))
+          .where(eq(courses.published, true))
+      : user.role === "instructor"
+        ? base.where(eq(courses.instructorId, user.id))
+        : base;
+  return q.orderBy(desc(courses.term), asc(courses.code)).limit(100);
 }

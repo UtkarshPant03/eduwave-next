@@ -12,7 +12,7 @@
     "db:seed": "tsx scripts/seed.ts",
     "db:backup": "tsx scripts/backup.ts",
     "db:restore": "tsx scripts/restore.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && tsc --noEmit",
     "postinstall": "node scripts/copy-excalidraw-assets.mjs",
     "test:e2e": "node tests/e2e.mjs",
     "test:db": "tsx --conditions=react-server tests/db-integrity.ts",

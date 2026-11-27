@@ -11,13 +11,16 @@ type Item = { id: string; title: string; body: string | null; link: string | nul
 const POLL_MS = 30_000;
 
 /**
- * Polls for notifications every 30 s while the tab is visible. Polling is simple and
- * works on any host (incl. serverless); WebSockets/SSE are the upgrade path.
+ * Polls a cheap summary (unread count + newest id) every 30 s while the tab is visible, and
+ * downloads the list only when that summary changed or the panel is opened. Polling is
+ * simple and works on any host; WebSockets/SSE are the upgrade path.
  */
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [data, setData] = useState<{ unread: number; items: Item[] }>({ unread: 0, items: [] });
   const seen = useRef<Set<string> | null>(null);
+  // What the last full load saw, compared against each cheap poll.
+  const latestRef = useRef<{ unread: number; latest: string | null }>({ unread: -1, latest: null });
   const panelRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
@@ -30,21 +33,33 @@ export function NotificationBell() {
         for (const n of next.items) if (!seen.current.has(n.id) && !n.readAt) toast(n.title, { description: n.body ?? undefined });
       }
       seen.current = new Set(next.items.map((n) => n.id));
+      latestRef.current = { unread: next.unread, latest: next.items[0]?.id ?? null };
       setData(next);
     } catch {}
   }, []);
 
+  // Full list only if something changed since the last load.
+  const poll = useCallback(async () => {
+    try {
+      const res = await fetch("/api/notifications?summary=1", { cache: "no-store" });
+      if (!res.ok) return;
+      const s: { unread: number; latest: string | null } = await res.json();
+      const current = latestRef.current;
+      if (s.latest !== current.latest || s.unread !== current.unread) await load();
+    } catch {}
+  }, [load]);
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- initial fetch from an external API
     load();
-    const id = setInterval(() => document.visibilityState === "visible" && load(), POLL_MS);
-    const onVisible = () => document.visibilityState === "visible" && load();
+    const id = setInterval(() => document.visibilityState === "visible" && poll(), POLL_MS);
+    const onVisible = () => document.visibilityState === "visible" && poll();
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       clearInterval(id);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [load]);
+  }, [load, poll]);
 
   // Close on outside click / Escape.
   useEffect(() => {
@@ -67,7 +82,10 @@ export function NotificationBell() {
   return (
     <div className="relative" ref={panelRef}>
       <button
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          if (!open) load(); // fresh list whenever the panel opens
+          setOpen((o) => !o);
+        }}
         className="relative grid size-9 place-items-center rounded-lg text-muted hover:bg-surface-2 hover:text-foreground"
         aria-label={`Notifications${data.unread ? `, ${data.unread} unread` : ""}`}
         aria-expanded={open}

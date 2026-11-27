@@ -155,6 +155,23 @@ async function main() {
     /unique|duplicate/i,
   );
 
+  // ---- completion ticks (migration 0002) ---------------------------------------------
+  const [resA] = await db.insert(schema.resources).values({ courseId: courseA.id, title: "Notes", url: "https://example.edu/notes" }).returning();
+  await expectReject(
+    "completion tick can't name another course's item",
+    (tx) => tx.insert(schema.completions).values({ userId: student.id, itemId: resA.id, courseId: courseB.id }),
+    /not a resource or live session/i,
+  );
+  await expectReject(
+    "completion tick can't name a non-existent item",
+    (tx) => tx.insert(schema.completions).values({ userId: student.id, itemId: randomUUID(), courseId: courseA.id }),
+    /not a resource or live session/i,
+  );
+  await db.insert(schema.completions).values({ userId: student.id, itemId: resA.id, courseId: courseA.id });
+  await db.delete(schema.resources).where(eq(schema.resources.id, resA.id));
+  const ghosts = await db.$count(schema.completions, eq(schema.completions.itemId, resA.id));
+  check("deleting an item removes its completion ticks", ghosts === 0, `${ghosts} left`);
+
   // ---- history ---------------------------------------------------------------------
   const [ev] = await db.insert(schema.auditLog).values({ userId: student.id, action: "login" }).returning();
   await expectReject("audit log rows can't be edited", (tx) => tx.update(schema.auditLog).set({ action: "x" }).where(eq(schema.auditLog.id, ev.id)), /append-only/i);

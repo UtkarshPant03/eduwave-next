@@ -31,19 +31,23 @@ export function Button({
   return <button className={cx(buttonClass(variant, size), className)} {...props} />;
 }
 
+// Full width by default; a caller's own width class (w-40, w-60, ...) wins instead of
+// competing with w-full (cx() concatenates, it doesn't merge conflicting utilities).
+const width = (className?: string) => (/(^|\s)w-/.test(className ?? "") ? "" : "w-full");
+
 const fieldClass =
-  "w-full rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm placeholder:text-muted transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:opacity-60";
+  "rounded-lg border border-border-strong bg-surface px-3 py-2 text-sm placeholder:text-muted transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:opacity-60";
 
 export function Input({ className, ...props }: ComponentProps<"input">) {
-  return <input className={cx(fieldClass, className)} {...props} />;
+  return <input className={cx(fieldClass, width(className), className)} {...props} />;
 }
 
 export function Textarea({ className, ...props }: ComponentProps<"textarea">) {
-  return <textarea className={cx(fieldClass, "min-h-24", className)} {...props} />;
+  return <textarea className={cx(fieldClass, width(className), "min-h-24", className)} {...props} />;
 }
 
 export function Select({ className, ...props }: ComponentProps<"select">) {
-  return <select className={cx(fieldClass, className)} {...props} />;
+  return <select className={cx(fieldClass, width(className), className)} {...props} />;
 }
 
 export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: ReactNode }) {
@@ -295,5 +299,41 @@ export function PageSkeleton() {
         <div className="skeleton h-64 rounded-xl" />
       </div>
     </div>
+  );
+}
+
+export const PAGE_SIZE = 50;
+
+/** Reads a 1-based ?page= value safely. */
+export function pageParam(v: unknown) {
+  const n = Number(typeof v === "string" ? v : 1);
+  return Number.isInteger(n) && n >= 1 && n <= 10_000 ? n : 1;
+}
+
+/**
+ * Previous / next pagination as plain links (no JavaScript needed; the page lives in the URL).
+ * `params` are the other query parameters to keep (filters).
+ */
+export function Pager({ path, page, total, params = {} }: { path: string; page: number; total: number; params?: Record<string, string | undefined> }) {
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (pages <= 1) return null;
+  const href = (p: number) => {
+    const q = new URLSearchParams(Object.entries(params).filter((e): e is [string, string] => Boolean(e[1])));
+    if (p > 1) q.set("page", String(p));
+    const qs = q.toString();
+    return qs ? `${path}?${qs}` : path;
+  };
+  const first = (page - 1) * PAGE_SIZE + 1;
+  return (
+    <nav aria-label="Pagination" className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
+      <p className="text-muted">
+        {first}–{Math.min(page * PAGE_SIZE, total)} of {total}
+      </p>
+      <div className="flex gap-2">
+        {page > 1 ? <Link href={href(page - 1)} className={buttonClass("secondary", "sm")} rel="prev">Previous</Link> : <span className={cx(buttonClass("secondary", "sm"), "opacity-50")} aria-disabled="true">Previous</span>}
+        <span className="self-center text-muted">Page {page} of {pages}</span>
+        {page < pages ? <Link href={href(page + 1)} className={buttonClass("secondary", "sm")} rel="next">Next</Link> : <span className={cx(buttonClass("secondary", "sm"), "opacity-50")} aria-disabled="true">Next</span>}
+      </div>
+    </nav>
   );
 }

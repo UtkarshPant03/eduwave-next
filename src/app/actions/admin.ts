@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { refresh } from "next/cache";
-import { eq } from "drizzle-orm";
+import { eq, inArray, or } from "drizzle-orm";
 import Papa from "papaparse";
 import { z } from "zod";
 import { db, schema } from "@/db";
@@ -74,6 +74,10 @@ export async function importUsers(csv: string): Promise<ImportResult> {
   if (data.length > 1000) return { created: [], errors: ["At most 1000 users per import."] };
 
   const result: ImportResult = { created: [], errors: [] };
+  // 1. Validate every row, and catch duplicates inside the file itself.
+  const valid: { row: number; data: z.infer<typeof userInput> }[] = [];
+  const seenEmail = new Set<string>();
+  const seenSid = new Set<string>();
   for (const [i, raw] of data.entries()) {
     const parsed = userInput.safeParse({
       role: (raw.role || "student").toLowerCase(),
@@ -87,14 +91,55 @@ export async function importUsers(csv: string): Promise<ImportResult> {
       result.errors.push(`Row ${i + 2}: ${firstIssue(parsed.error)}`);
       continue;
     }
-    const password = generateTempPassword();
+    const { email, studentId } = parsed.data;
+    if (seenEmail.has(email) || (studentId && seenSid.has(studentId))) {
+      result.errors.push(`Row ${i + 2}: ${email} appears more than once in this file.`);
+      continue;
+    }
+    seenEmail.add(email);
+    if (studentId) seenSid.add(studentId);
+    valid.push({ row: i + 2, data: parsed.data });
+  }
+
+  // 2. One query for accounts that already exist (instead of one failed insert per row).
+  const existing = valid.length
+    ? await db
+        .select({ email: schema.users.email, studentId: schema.users.studentId })
+        .from(schema.users)
+        .where(
+          or(
+            inArray(schema.users.email, valid.map((v) => v.data.email)),
+            inArray(schema.users.studentId, valid.flatMap((v) => (v.data.studentId ? [v.data.studentId] : []))),
+          ),
+        )
+    : [];
+  const takenEmail = new Set(existing.map((e) => e.email));
+  const takenSid = new Set(existing.flatMap((e) => (e.studentId ? [e.studentId] : [])));
+  const fresh = valid.filter((v) => {
+    const taken = takenEmail.has(v.data.email) || (v.data.studentId != null && takenSid.has(v.data.studentId));
+    if (taken) result.errors.push(`Row ${v.row}: ${v.data.email} or its student ID already exists.`);
+    return !taken;
+  });
+
+  // 3. Hash (bcrypt is deliberately slow: ~0.25 s per user, so 1,000 rows take a few minutes),
+  //    then insert in batches of 100. onConflictDoNothing still guards against a race.
+  for (let b = 0; b < fresh.length; b += 100) {
+    const batch = fresh.slice(b, b + 100);
+    const prepared = [];
+    for (const v of batch) {
+      const password = generateTempPassword();
+      prepared.push({ v, password, values: { ...v.data, mustChangePassword: true, passwordHash: await hashPassword(password) } });
+    }
     const inserted = await db
       .insert(schema.users)
-      .values({ ...parsed.data, mustChangePassword: true, passwordHash: await hashPassword(password) })
+      .values(prepared.map((p) => p.values))
       .onConflictDoNothing()
-      .returning({ id: schema.users.id });
-    if (!inserted.length) result.errors.push(`Row ${i + 2}: ${parsed.data.email} or its student ID already exists.`);
-    else result.created.push({ name: parsed.data.name, email: parsed.data.email, studentId: parsed.data.studentId, password });
+      .returning({ email: schema.users.email });
+    const ok = new Set(inserted.map((r) => r.email));
+    for (const p of prepared) {
+      if (ok.has(p.v.data.email)) result.created.push({ name: p.v.data.name, email: p.v.data.email, studentId: p.v.data.studentId, password: p.password });
+      else result.errors.push(`Row ${p.v.row}: ${p.v.data.email} or its student ID already exists.`);
+    }
   }
   await audit(admin.id, "user_created", `CSV import: ${result.created.length} users`);
   refresh();

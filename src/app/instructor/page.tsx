@@ -8,6 +8,7 @@ import { requireInstructor } from "@/lib/auth/dal";
 import { calendarEvents } from "@/lib/data/activity";
 import { gradingQueue } from "@/lib/data/assessments";
 import { listInstructorCourses } from "@/lib/data/courses";
+import { taughtCourseIds } from "@/lib/data/shared";
 import { formatDateTime, formatRelative, requestTime } from "@/lib/format";
 import { greeting } from "@/lib/greeting";
 
@@ -15,11 +16,12 @@ export const metadata: Metadata = { title: "Dashboard" };
 
 export default async function InstructorHome() {
   const user = await requireInstructor();
-  const courses = await listInstructorCourses(user.id);
   const now = requestTime();
-  const [queue, events] = await Promise.all([
+  // All three in parallel: the calendar needs only course ids, not the per-course statistics.
+  const [courses, queue, events] = await Promise.all([
+    listInstructorCourses(user.id),
     gradingQueue(user.id),
-    calendarEvents(courses.map((c) => c.id), new Date(now), new Date(now + 14 * 86_400_000)),
+    taughtCourseIds(user.id).then((ids) => calendarEvents(ids, new Date(now), new Date(now + 14 * 86_400_000))),
   ]);
   const students = courses.reduce((s, c) => s + c.students, 0);
   const toGrade = courses.reduce((s, c) => s + c.toGrade, 0);

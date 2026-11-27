@@ -55,7 +55,9 @@ export async function CalendarPage({ role, searchParams }: { role: Exclude<Role,
       />
       <div className="grid gap-6 xl:grid-cols-[1fr_18rem] [&>*]:min-w-0">
         <Card title={<span className="flex items-center gap-2"><CalendarDays className="size-4 text-accent" /> {label}</span>}>
-          <div className="grid grid-cols-7 gap-px overflow-hidden rounded-xl border border-border bg-border text-xs">
+          {/* Phones: an agenda list (a 7-column grid is ~45px per day at 375px, unreadable). */}
+          <MonthAgenda days={days} month={m} byDay={byDay} todayKey={todayKey} hrefFor={hrefFor} />
+          <div className="hidden grid-cols-7 gap-px overflow-hidden rounded-xl border border-border bg-border text-xs sm:grid">
             {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
               <div key={d} className="bg-surface-2 px-2 py-1.5 text-center font-medium text-muted">{d}</div>
             ))}
@@ -122,5 +124,58 @@ export async function CalendarPage({ role, searchParams }: { role: Exclude<Role,
         </Card>
       </div>
     </>
+  );
+}
+
+/** The month as a list of days that have events (shown below the `sm` breakpoint). */
+function MonthAgenda({
+  days,
+  month,
+  byDay,
+  todayKey,
+  hrefFor,
+}: {
+  days: Date[];
+  month: number;
+  byDay: Map<string, CalendarEvent[]>;
+  todayKey: string;
+  hrefFor: (e: CalendarEvent) => string;
+}) {
+  const withEvents = days.filter((d) => d.getUTCMonth() === month - 1 && (byDay.get(d.toISOString().slice(0, 10))?.length ?? 0) > 0);
+  if (withEvents.length === 0) return <p className="text-sm text-muted sm:hidden">Nothing scheduled this month.</p>;
+  return (
+    <ol className="space-y-4 sm:hidden">
+      {withEvents.map((d) => {
+        const key = d.toISOString().slice(0, 10);
+        return (
+          <li key={key}>
+            <h3 className="mb-1.5 text-sm font-semibold">
+              {d.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" })}
+              {key === todayKey && <span className="ml-2 text-xs font-normal text-muted">Today</span>}
+            </h3>
+            <ul className="divide-y divide-border rounded-lg border border-border">
+              {(byDay.get(key) ?? []).map((e) => {
+                const Icon = ICON[e.kind];
+                return (
+                  <li key={e.id}>
+                    <Link href={hrefFor(e)} className="flex min-h-11 items-center gap-3 px-3 py-2 text-sm hover:bg-surface-2">
+                      <span className="h-8 w-1 shrink-0 rounded-full" style={{ background: coverFor(e.color).from }} aria-hidden />
+                      <Icon className="size-4 shrink-0 text-muted" aria-hidden />
+                      <span className="min-w-0 flex-1">
+                        <span className={cx("block font-medium", e.done && "text-muted line-through")}>{e.title}</span>
+                        <span className="block text-xs text-muted">
+                          {e.courseCode} · {formatTime(e.at)}
+                          {e.done && " · done"}
+                        </span>
+                      </span>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </li>
+        );
+      })}
+    </ol>
   );
 }

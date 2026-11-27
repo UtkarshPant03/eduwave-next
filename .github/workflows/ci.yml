@@ -5,7 +5,6 @@ name: CI
 
 on:
   push:
-    branches: [master]
   pull_request:
 
 permissions:
@@ -20,8 +19,8 @@ jobs:
     name: Lint, typecheck, build, audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: npm run lint
@@ -46,8 +45,8 @@ jobs:
     env:
       DATABASE_URL: postgres://eduwave:eduwave@localhost:5432/eduwave_ci
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: npm run db:migrate
@@ -66,8 +65,8 @@ jobs:
       SMTP_USER: test
       SMTP_PASS: test
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: npm run build

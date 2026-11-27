@@ -46,6 +46,12 @@ This file explains eduWave's security model, what changed in the 2026-11-27 hard
 
 **Manual probes:** production `next start` was run with no `DATABASE_URL` (refused), with a database containing sample accounts (refused), and with a clean PostgreSQL database plus an https `APP_URL` (started, with HSTS).
 
+## Re-verification (4.0.1)
+
+Every item above was re-inspected in the code on 2026-11-27: Server Action authorization, course ownership, student isolation, file downloads, the temporary-password gate, session revocation and rotation, lockout, trusted proxies, AI request limits, thread moderation, CSV exports and production validation. The attack replays (`test:security`, 10/10) and E2E security checks (42/42) pass against the 4.0.1 build. Production startup refusals were re-tested with five configurations (`docs/TESTING.md`).
+
+No new critical or high-severity issues were found. One high-severity **release** issue was fixed: CI typecheck failed on clean checkouts (CI-01 in `PRODUCTION_AUDIT.md`). It was not a security issue.
+
 ## Accepted risks (documented exceptions)
 
 | Risk | Why accepted | Mitigation |

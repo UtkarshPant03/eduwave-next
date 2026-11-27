@@ -18,6 +18,36 @@ eduWave uses PostgreSQL through Drizzle ORM. The schema is in `src/db/schema.ts`
 npm run db:migrate        # applies pending migrations; running it again is a no-op
 ```
 
+### Plan for `0002_completions_integrity` (written before the change)
+
+**Problem.** `completions.item_id` points at either a resource or a live session, so it has no foreign key. Two consequences:
+- When an item is deleted through any path other than `deleteActivity`, its completion ticks stay behind, and progress counts them, so it can exceed 100%.
+- A tick could also name an item from another course.
+
+**Change.** Additive only: two trigger functions and three triggers. No column changes, and no existing row is modified or deleted.
+1. `BEFORE INSERT OR UPDATE ON completions`: the item must be a resource or live session **of the same course**. Otherwise the statement is rejected (`P0001`).
+2. `AFTER DELETE ON resources` and `ON live_sessions`: delete that item's completion ticks. A tick for a deleted item has no meaning.
+3. **App:** progress counts only ticks whose item still exists, so orphans left over from before 0002 no longer inflate it. They can be removed with the optional SQL below.
+
+**Pre-check.** None needed: existing rows aren't re-validated by a BEFORE trigger.
+
+**Rollback.**
+```sql
+DROP TRIGGER completions_item_valid ON completions;
+DROP TRIGGER resources_completions_cleanup ON resources;
+DROP TRIGGER live_sessions_completions_cleanup ON live_sessions;
+DROP FUNCTION eduwave_completion_item_valid(), eduwave_delete_item_completions();
+DELETE FROM drizzle.__drizzle_migrations WHERE hash = '<hash of 0002>';   -- PostgreSQL; then remove 0002 from drizzle/meta/_journal.json
+```
+
+**Optional one-off cleanup of pre-existing orphans** (only after a backup):
+```sql
+DELETE FROM completions c WHERE NOT EXISTS (SELECT 1 FROM resources r WHERE r.id = c.item_id)
+                            AND NOT EXISTS (SELECT 1 FROM live_sessions l WHERE l.id = c.item_id);
+```
+
+**Section positions (no schema change).** Every section change takes a lock on the course row and runs in one transaction, so concurrent adds can't produce duplicate positions. `moveSection` renumbers positions to 0..n-1 before swapping, which also repairs duplicates created before this fix. A `UNIQUE (course_id, position)` constraint was considered and rejected for now: swapping two positions would need it `DEFERRABLE`, which Drizzle's schema DSL can't express, and existing duplicates would make the migration fail.
+
 **Changing the schema:** edit `src/db/schema.ts`, run `npm run db:generate`, then **read the generated SQL**. Hand-edit it where Drizzle can't express what's needed. Examples from `0001`:
 - A NOT NULL column added to existing rows must be added nullable, back-filled, then made NOT NULL.
 - UNIQUE constraints must be created before the composite foreign keys that reference them.
