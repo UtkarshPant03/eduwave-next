@@ -1,5 +1,41 @@
 # Changelog
 
+## 4.3.0: Phase 3, attendance (2026-11-27)
+
+**Database (migration `0004_attendance`, additive)**
+- New tables: attendance settings, sessions, records, history and correction requests.
+- **History in the database.** A trigger writes every mark and every change to append-only history (old status, new status, who, reason), so no code path can skip it.
+- **Enrolment check.** A trigger refuses marks for students not enrolled in the course.
+- Plan and rollback: `DATABASE.md`.
+
+**Taking attendance** (course page → Attendance tab)
+- **Who can mark.** Instructors, coordinators and teaching assistants (capability `attendance.mark`).
+- **Starting a class.** Staff record a class with its date, time and topic. Optionally, they limit it to one class section, which narrows the roster to students placed in that section for the course's term.
+- **The sheet.** It has present, late, absent and excused for each student, and "Mark all present". It saves in one transaction; unchanged marks aren't rewritten, so the history shows only real changes.
+
+**Reports**
+- A per-student summary with counts and a percentage, and a list of classes with counts.
+- CSV export with a "Below minimum" column.
+- **Percentage rule.** Attendance % = (present + late × late credit) ÷ (present + late + absent). Excused classes don't count.
+
+**Policy is configurable, not assumed (D3)**
+- Each course has an optional minimum percentage and a late credit (default 100%, the same as present).
+- No minimum is set by default. Students below a configured minimum are flagged.
+
+**Corrections**
+- Students see their own attendance per course and can request a correction with a reason; one open request per class is allowed.
+- Instructors and coordinators (`attendance.approve`) approve or decline it. Teaching assistants can't.
+- Approval changes the mark, so the history records it. The student is notified either way.
+
+**Accessibility fixes found while testing**
+- The correction button's accessible name now contains its visible text (WCAG 2.5.3).
+- The confirmation toast is no longer lost when the page refreshes and closes the dialog.
+
+**Tests**
+- New `test:attendance` suite (12 checks). It covers the default of no minimum, seeded percentages, section-limited sheets, saving, minimum flagging, the student view and correction request, approval and notification, and CSV. It also replays crafted Server Action calls: a student marking attendance and a TA deciding a correction are both refused.
+- `test:unit` goes to 29 (attendance arithmetic) and `test:db` to 36 (enrolment check, history written and append-only, one open request, RESTRICT delete, value ranges).
+- The accessibility scan now opens the Attendance tab for instructor and student and scans the attendance sheet page.
+
 ## 4.2.0: Phase 2b, department-scoped administration (2026-11-27)
 
 No schema change: this release uses the `role_assignments` table from 0003.

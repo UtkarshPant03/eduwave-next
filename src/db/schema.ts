@@ -33,6 +33,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 
@@ -695,4 +696,122 @@ export const tasks = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index().on(t.userId)],
+);
+
+/* ============================== attendance ============================== */
+/*
+ * Phase 3. Policy is configuration, never code: the minimum percentage (if any) and how
+ * much a "late" counts are per-course settings (no university policy is assumed, D3).
+ * Every change to a record is logged by a database trigger into attendance_events
+ * (append-only), so no code path can skip the history. See docs/DATABASE.md.
+ */
+
+export const attendanceStatusEnum = pgEnum("attendance_status", ["present", "absent", "late", "excused"]);
+export const correctionStatusEnum = pgEnum("correction_status", ["pending", "approved", "rejected"]);
+
+export const attendanceSettings = pgTable(
+  "attendance_settings",
+  {
+    courseId: uuid()
+      .primaryKey()
+      .references(() => courses.id, { onDelete: "cascade" }),
+    // Minimum attendance shown to students and staff; null = no threshold configured.
+    thresholdPercent: integer(),
+    // How much a "late" counts towards attendance (100 = like present, 0 = like absent).
+    lateCreditPercent: integer().notNull().default(100),
+    updatedAt: ts().notNull().defaultNow(),
+  },
+  (t) => [
+    check("attendance_settings_threshold_check", sql`${t.thresholdPercent} is null or ${t.thresholdPercent} between 0 and 100`),
+    check("attendance_settings_late_check", sql`${t.lateCreditPercent} between 0 and 100`),
+  ],
+);
+
+export const attendanceSessions = pgTable(
+  "attendance_sessions",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    courseId: courseRef(),
+    // Optional: the class section this meeting was for (its roster comes from student_sections).
+    sectionId: uuid().references(() => classSections.id, { onDelete: "restrict" }),
+    // Optional: the live class this meeting was held as (for future automatic capture).
+    liveSessionId: uuid().references(() => liveSessions.id, { onDelete: "set null" }),
+    heldAt: ts().notNull(),
+    topic: text(),
+    createdBy: uuid()
+      .notNull()
+      .references((): AnyPgColumn => users.id, { onDelete: "restrict" }),
+    createdAt: createdAt(),
+  },
+  (t) => [index().on(t.courseId, t.heldAt)],
+);
+
+export const attendanceRecords = pgTable(
+  "attendance_records",
+  {
+    // RESTRICT: a session with records can't be deleted (attendance is an academic record).
+    sessionId: uuid()
+      .notNull()
+      .references(() => attendanceSessions.id, { onDelete: "restrict" }),
+    studentId: uuid()
+      .notNull()
+      .references((): AnyPgColumn => users.id, { onDelete: "restrict" }),
+    status: attendanceStatusEnum().notNull(),
+    markedBy: uuid()
+      .notNull()
+      .references((): AnyPgColumn => users.id, { onDelete: "restrict" }),
+    markedAt: ts().notNull().defaultNow(),
+    // Why it was set or changed (e.g. "correction approved"); copied into the history.
+    note: text(),
+  },
+  (t) => [primaryKey({ columns: [t.sessionId, t.studentId] }), index().on(t.studentId)],
+);
+
+/** Append-only history of every attendance mark and change (written by a trigger). */
+export const attendanceEvents = pgTable(
+  "attendance_events",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    sessionId: uuid()
+      .notNull()
+      .references(() => attendanceSessions.id, { onDelete: "restrict" }),
+    studentId: uuid()
+      .notNull()
+      .references((): AnyPgColumn => users.id, { onDelete: "restrict" }),
+    oldStatus: attendanceStatusEnum(),
+    newStatus: attendanceStatusEnum().notNull(),
+    changedBy: uuid()
+      .notNull()
+      .references((): AnyPgColumn => users.id, { onDelete: "restrict" }),
+    reason: text(),
+    createdAt: createdAt(),
+  },
+  (t) => [index().on(t.sessionId, t.studentId, t.createdAt)],
+);
+
+export const attendanceCorrections = pgTable(
+  "attendance_corrections",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    sessionId: uuid()
+      .notNull()
+      .references(() => attendanceSessions.id, { onDelete: "restrict" }),
+    studentId: uuid()
+      .notNull()
+      .references((): AnyPgColumn => users.id, { onDelete: "restrict" }),
+    requestedStatus: attendanceStatusEnum().notNull(),
+    reason: text().notNull(),
+    status: correctionStatusEnum().notNull().default("pending"),
+    requestedAt: createdAt(),
+    decidedBy: uuid().references((): AnyPgColumn => users.id, { onDelete: "restrict" }),
+    decidedAt: ts(),
+    decisionNote: text(),
+  },
+  (t) => [
+    index().on(t.sessionId),
+    index().on(t.studentId),
+    // At most one open request per student per session.
+    uniqueIndex("attendance_corrections_one_pending_idx").on(t.sessionId, t.studentId).where(sql`${t.status} = 'pending'`),
+    check("attendance_corrections_decision_check", sql`(${t.status} = 'pending') = (${t.decidedAt} is null)`),
+  ],
 );

@@ -218,6 +218,35 @@ async function main() {
     /foreign key|violates/i,
   );
 
+  // ---- attendance (migration 0004) --------------------------------------------------
+  const [klass] = await db.insert(schema.attendanceSessions).values({ courseId: courseA.id, heldAt: new Date(), createdBy: instructor.id }).returning();
+  await expectReject(
+    "only enrolled students can be marked",
+    (tx) => tx.insert(schema.attendanceRecords).values({ sessionId: klass.id, studentId: student.id, status: "present", markedBy: instructor.id }),
+    /not enrolled/i,
+  );
+  await db.insert(schema.enrollments).values({ courseId: courseA.id, userId: student.id });
+  await db.insert(schema.attendanceRecords).values({ sessionId: klass.id, studentId: student.id, status: "absent", markedBy: instructor.id, note: "marked" });
+  await db
+    .update(schema.attendanceRecords)
+    .set({ status: "present", note: "correction approved" })
+    .where(eq(schema.attendanceRecords.sessionId, klass.id));
+  const history = await db.select().from(schema.attendanceEvents).where(eq(schema.attendanceEvents.sessionId, klass.id));
+  check(
+    "every mark and change is written to the attendance history automatically",
+    history.length === 2 && history.some((h) => h.oldStatus === "absent" && h.newStatus === "present" && h.reason === "correction approved"),
+    `${history.length} events`,
+  );
+  await expectReject("attendance history can't be edited", (tx) => tx.update(schema.attendanceEvents).set({ reason: "x" }).where(eq(schema.attendanceEvents.sessionId, klass.id)), /append-only/i);
+  await expectReject("a class with attendance can't be deleted", (tx) => tx.delete(schema.attendanceSessions).where(eq(schema.attendanceSessions.id, klass.id)), /foreign key|violates/i);
+  await expectReject("a minimum above 100% is refused", (tx) => tx.insert(schema.attendanceSettings).values({ courseId: courseA.id, thresholdPercent: 120 }), /check|threshold/i);
+  await db.insert(schema.attendanceCorrections).values({ sessionId: klass.id, studentId: student.id, requestedStatus: "late", reason: "train was late" });
+  await expectReject(
+    "only one open correction request per student per class",
+    (tx) => tx.insert(schema.attendanceCorrections).values({ sessionId: klass.id, studentId: student.id, requestedStatus: "excused", reason: "again" }),
+    /duplicate|unique/i,
+  );
+
   // ---- history ---------------------------------------------------------------------
   const [ev] = await db.insert(schema.auditLog).values({ userId: student.id, action: "login" }).returning();
   await expectReject("audit log rows can't be edited", (tx) => tx.update(schema.auditLog).set({ action: "x" }).where(eq(schema.auditLog.id, ev.id)), /append-only/i);

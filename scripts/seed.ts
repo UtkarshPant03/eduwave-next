@@ -125,6 +125,27 @@ async function main() {
       ...students.slice(0, 9).map((s) => ({ courseId: dbms.id, userId: s.id, enrolledAt: new Date(now - 39 * DAY) })),
     ]);
 
+    // Attendance: three past CS201 classes (no minimum configured: that's the university's policy to set).
+    const classes = await tx
+      .insert(schema.attendanceSessions)
+      .values([
+        { courseId: ds.id, heldAt: at(-9, 10, 0), topic: "Arrays and linked lists", createdBy: meera.id },
+        { courseId: ds.id, heldAt: at(-7, 10, 0), topic: "Stacks and queues", createdBy: meera.id },
+        { courseId: ds.id, heldAt: at(-2, 10, 0), topic: "Binary search trees", createdBy: meera.id },
+      ])
+      .returning();
+    await tx.insert(schema.attendanceRecords).values(
+      classes.flatMap((c, k) =>
+        students.map((s, i) => ({
+          sessionId: c.id,
+          studentId: s.id,
+          markedBy: meera.id,
+          note: "marked",
+          status: (i === 3 && k < 2 ? "absent" : i === 5 && k === 1 ? "late" : i === 7 && k === 2 ? "excused" : "present") as "present" | "absent" | "late" | "excused",
+        })),
+      ),
+    );
+
     // Sections (weeks) for every course.
     const weekTitles: Record<string, string[]> = {
       [ds.id]: ["Week 1 · Complexity analysis", "Week 2 · Arrays and linked lists", "Week 3 · Stacks and queues", "Week 4 · Trees and BSTs", "Week 5 · Heaps and hashing", "Week 6 · Graphs"],

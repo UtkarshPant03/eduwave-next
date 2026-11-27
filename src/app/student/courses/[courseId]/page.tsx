@@ -1,7 +1,8 @@
-import { ClipboardCheck, Info, LayoutList, Megaphone, MessagesSquare } from "lucide-react";
+import { CalendarCheck, ClipboardCheck, Info, LayoutList, Megaphone, MessagesSquare } from "lucide-react";
 import Link from "next/link";
 import { Tabs } from "@/components/client/tabs";
 import { CourseHero } from "@/components/course/course-hero";
+import { StudentAttendancePanel } from "@/components/course/attendance-panel";
 import { Discussions } from "@/components/course/discussions";
 import { CourseOutline } from "@/components/course/outline";
 import { Markdown, plainText } from "@/components/markdown";
@@ -63,6 +64,7 @@ export default async function StudentCoursePage({ params }: PageProps<"/student/
             ),
           },
           { id: "discussions", label: <><MessagesSquare className="size-4" /> Discussions</>, content: <Discussions courseId={course.id} role="student" now={now} /> },
+          { id: "attendance", label: <><CalendarCheck className="size-4" /> Attendance</>, content: <StudentAttendancePanel courseId={course.id} studentId={user.id} /> },
           {
             id: "grades",
             label: <><ClipboardCheck className="size-4" /> Grades</>,

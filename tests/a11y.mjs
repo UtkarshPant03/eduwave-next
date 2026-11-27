@@ -31,16 +31,18 @@ async function signIn(page, id) {
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.waitForURL((u) => !u.pathname.startsWith("/login"));
 }
-async function scan(page, path, theme) {
+async function scan(page, path, theme, tab) {
   await page.goto(`${BASE}${path}`);
   await page.waitForLoadState("networkidle");
+  // Inactive tab panels aren't rendered visibly, so tabs with their own content are opened first.
+  if (tab) await page.getByRole("tab", { name: new RegExp(tab) }).click();
   await page.addScriptTag({ path: AXE });
   const result = await page.evaluate(() =>
     axe.run(document, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] } }),
   );
   for (const v of result.violations) {
     const f = findings.get(v.id) ?? { impact: v.impact, help: v.help, pages: new Set(), samples: new Map() };
-    f.pages.add(`${path} (${theme})`);
+    f.pages.add(`${path}${tab ? ` [${tab}]` : ""} (${theme})`);
     // Keep each distinct problem once (e.g. each colour pair), so one rule can't hide several causes.
     for (const n of v.nodes) {
       const why = (n.failureSummary ?? "").split("\n")[1]?.trim() ?? "";
@@ -79,6 +81,9 @@ for (const theme of ["light", "dark"]) {
     "/instructor", "/instructor/courses", course, `${course}/assignments/new`, `${course}/quizzes/new`, lab2, `${lab2}/edit`,
     quiz1, `${quiz1}/edit`, deptPage, "/instructor/calendar", "/instructor/boards", "/instructor/account", "/instructor/courses/not-a-course",
   ]) await scan(ins, p, theme);
+  await scan(ins, course, theme, "Attendance");
+  const sheet = await ins.locator('a[href*="/attendance/"]:not([href$="/export"])').first().getAttribute("href");
+  await scan(ins, sheet, theme);
   await ins.context().close();
 
   const stu = await (await context(theme)).newPage();
@@ -92,6 +97,7 @@ for (const theme of ["light", "dark"]) {
     "/student", "/student/courses", sCourse, sLab, sQuiz, "/student/catalog", "/student/grades",
     "/student/calendar", "/student/boards", "/student/account",
   ]) await scan(stu, p, theme);
+  await scan(stu, sCourse, theme, "Attendance");
   await stu.context().close();
 }
 await browser.close();

@@ -13,6 +13,7 @@ import { attemptEndsAt, buildLayout, GRACE_MS, isAttemptOpen } from "../../src/l
 import { checkUpload, isInlineSafe, MAX_UPLOAD_BYTES } from "../../src/lib/uploads";
 import { csvResponse } from "../../src/lib/csv";
 import { staffCan } from "../../src/lib/auth/capabilities";
+import { attendancePercent, belowThreshold } from "../../src/lib/attendance";
 
 const DAY = 86_400_000;
 
@@ -170,5 +171,26 @@ describe("course staff capabilities", () => {
   it("non-staff can do nothing (fails closed)", () => {
     assert.equal(staffCan(null, "course.view"), false);
     assert.equal(staffCan(undefined, "grade.view"), false);
+  });
+});
+
+describe("attendance arithmetic (policy passed in, never assumed)", () => {
+  const c = (present: number, late: number, absent: number, excused: number) => ({ present, late, absent, excused });
+  it("excused classes are left out of the count", () => {
+    assert.equal(attendancePercent(c(3, 0, 1, 2), 100), 75);
+  });
+  it("a late mark counts as the configured share of present", () => {
+    assert.equal(attendancePercent(c(2, 2, 0, 0), 100), 100);
+    assert.equal(attendancePercent(c(2, 2, 0, 0), 50), 75);
+    assert.equal(attendancePercent(c(2, 2, 0, 0), 0), 50);
+  });
+  it("has no percentage before anything counts", () => {
+    assert.equal(attendancePercent(c(0, 0, 0, 3), 100), null);
+  });
+  it("flags only when a minimum is configured", () => {
+    assert.equal(belowThreshold(60, 75), true);
+    assert.equal(belowThreshold(75, 75), false);
+    assert.equal(belowThreshold(10, null), false);
+    assert.equal(belowThreshold(null, 75), false);
   });
 });

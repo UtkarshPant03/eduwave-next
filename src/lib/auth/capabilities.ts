@@ -15,16 +15,27 @@ export type CourseCapability =
   | "grade.view" // gradebook, analytics, exports
   | "grade.edit" // grade submissions
   | "discussion.moderate" // pin, lock, delete posts; post announcements
-  | "staff.manage"; // add and remove course staff (coordinators)
+  | "staff.manage" // add and remove course staff (coordinators)
+  | "attendance.mark" // take attendance
+  | "attendance.approve"; // decide students' correction requests
 
-const TEACHING: readonly CourseCapability[] = ["course.view", "course.manage", "grade.view", "grade.edit", "discussion.moderate"];
+const TEACHING: readonly CourseCapability[] = [
+  "course.view",
+  "course.manage",
+  "grade.view",
+  "grade.edit",
+  "discussion.moderate",
+  "attendance.mark",
+  "attendance.approve",
+];
 
 const CAPABILITIES: Record<CourseStaffRole, ReadonlySet<CourseCapability>> = {
   // Coordinators also decide who teaches the course.
   coordinator: new Set<CourseCapability>([...TEACHING, "staff.manage"]),
   instructor: new Set(TEACHING),
   // Teaching assistants help with marking and the forum, but can't change the course.
-  teaching_assistant: new Set<CourseCapability>(["course.view", "grade.view", "grade.edit", "discussion.moderate"]),
+  // They may take attendance, but corrections are decided by the course's instructors.
+  teaching_assistant: new Set<CourseCapability>(["course.view", "grade.view", "grade.edit", "discussion.moderate", "attendance.mark"]),
 };
 
 export function staffCan(role: CourseStaffRole | null | undefined, capability: CourseCapability): boolean {

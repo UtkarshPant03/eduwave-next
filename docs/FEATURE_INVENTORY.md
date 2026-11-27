@@ -95,9 +95,13 @@ Roles: **A** admin · **I** instructor · **S** student. "Tests" names the suite
 
 ## Attendance
 
-| Feature | Status | Notes |
-|---|---|---|
-| Sessions, statuses (present, absent, late, excused), reports, corrections, policies | **Missing** | No code or tables. High priority for Graphic Era (Phase 3). The threshold must be configurable, not hard-coded (D3) |
+| Feature | Roles | Code | Data | Tests | Status | Issues / action |
+|---|---|---|---|---|---|---|
+| Class sessions per course, optionally per class section; sheet with present, late, absent and excused; mark all present | I, TA | `actions/attendance.ts`, `/instructor/courses/[id]/attendance/[sessionId]` | attendance_sessions, attendance_records (0004) | attendance, db, a11y | **Verified** (4.3) | Sessions can't be edited or deleted in the interface. Staff aren't assigned to sections, so any marker on the course can mark any session |
+| Per-student summary and percentages; class list; CSV export | I, TA | `attendance-panel.tsx`, `attendance/export` | — | attendance, unit | **Verified** (4.3) | No department-wide or programme-wide report yet |
+| Configurable minimum and late credit per course; flag below minimum | I (course.manage) | settings card | attendance_settings | attendance, unit | **Verified** (4.3) | **No default minimum (D3).** No department-level default, condonation workflow or automatic alerts |
+| Student's own attendance; correction requests with approval; notifications | S, I | `StudentAttendancePanel`, `requestCorrection`, `decideCorrection` | attendance_corrections | attendance (incl. crafted TA and student calls), db | **Verified** (4.3) | TAs can mark but not decide corrections |
+| Append-only history of every mark and change | — | database trigger | attendance_events | db | **Verified** (4.3) | History isn't shown in the interface yet |
 
 ## Communication
 

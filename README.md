@@ -84,11 +84,12 @@ site-wide audit log.
 **Instructors**: build courses week by week (sections, files, links, live classes); create and edit
 assignments (Markdown, late windows) and quizzes (shuffled, AI-drafted optionally); grade submissions
 with feedback from one queue; see quiz analytics and a full gradebook with CSV export; post
-announcements and moderate discussions; manage enrolment (by ID/email or an enrolment key).
+announcements and moderate discussions; take attendance per class or section, set an optional minimum,
+and decide students' correction requests; manage enrolment (by ID/email or an enrolment key).
 
 **Students**: see every course and deadline on one dashboard; browse the catalogue and self-enrol
 with a key; work through sections with completion tracking; submit assignments (text + file); take
-timed quizzes; follow grades, a provisional GPA and feedback; discuss with classmates; use the calendar,
+timed quizzes; follow grades, a provisional GPA and feedback; see their attendance and request corrections; discuss with classmates; use the calendar,
 study timer, to-do list, whiteboards and the AI tutor.
 
 **Everyone**: notifications, Ctrl+K command palette, light/dark theme, mobile layout, profile, active
@@ -210,7 +211,7 @@ docs/FEATURES.md          feature catalogue & project guide
 | `db:generate` | After editing `src/db/schema.ts`, generate a SQL migration |
 | `db:migrate`, `db:seed` | Apply migrations, load sample data |
 | `create-admin` | Create the first administrator on a clean install |
-| `test:e2e`, `test:stability`, `test:security`, `test:a11y` | Browser tests: main flows; data safety, timer and email; attack replays; accessibility |
+| `test:e2e`, `test:stability`, `test:security`, `test:institution`, `test:attendance`, `test:a11y` | Browser tests: main flows; data safety, timer and email; attack replays; academic structure and scoped roles; attendance; accessibility |
 | `test:db` | Database integrity and concurrency (throwaway database) |
 | `db:backup`, `db:restore` | Verified database backup with rotation; restore that keeps the old data aside |
 
@@ -231,8 +232,10 @@ EDUWAVE_ENV=local SMTP_HOST=127.0.0.1 SMTP_PORT=2525 SMTP_USER=test SMTP_PASS=te
 npm run test:e2e          # second terminal, ~1 min
 npm run test:stability    # ~2 min (waits for a real 1-minute quiz timer)
 npm run test:security     # replays the production audit's attacks
+npm run test:institution  # academic structure, department roles, course staff
+npm run test:attendance   # attendance, minimums, corrections
 npm run test:a11y         # ~2 min, accessibility scan of ~30 pages × light/dark
-# database integrity (19 checks, incl. concurrency) on a throwaway database:
+# database integrity (36 checks, incl. concurrency) on a throwaway database:
 PGLITE_DIR=./.pglite-test npm run db:migrate && PGLITE_DIR=./.pglite-test npm run test:db
 ```
 

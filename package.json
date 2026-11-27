@@ -20,6 +20,7 @@
     "test:stability": "node tests/stability.mjs",
     "test:security": "node tests/security.mjs",
     "test:institution": "node tests/institution.mjs",
+    "test:attendance": "node tests/attendance.mjs",
     "test:a11y": "node tests/a11y.mjs",
     "create-admin": "tsx scripts/create-admin.ts"
   },

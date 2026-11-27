@@ -16,6 +16,7 @@ This reviews eduWave against the security requirements for a Graphic Era deploym
 | Authorisation (roles) | Correct but **coarse** | Every action authorised server-side (sec, e2e). Three global roles, so scoped administration (department, section) is impossible today (A-01, Phase 2) |
 | Role escalation / mass assignment | Tested | Admin actions require admin; moderation uses a strict schema (sec) |
 | IDOR / cross-course | Tested | Ownership checks, 404s, UUID validation (sec, e2e) |
+| Attendance boundaries | Tested (4.3) | A student's crafted `saveAttendance` call and a TA's crafted `decideCorrection` call are refused; students can request corrections only for their own marks; marks for students not enrolled in the course are refused by the database (`test:attendance`, `test:db`). **Not yet enforced:** limiting a marker to their own sections, because staff aren't assigned to sections (see roadmap) |
 | Cross-section / cross-department | Tested (4.2) | A department admin's crafted calls against another department's course (unlink section, remove staff, enrol) are refused, and their department page returns 404. A TA can't change a course; a non-coordinator instructor outside the department can't change staff; instructors and students can't call administrator actions (`test:institution`, 21 checks) |
 | CSRF | Server Action Origin checks; SameSite=Lax | — |
 | XSS | No raw-HTML sink; React elements only; CSP | `'unsafe-inline'` accepted (`SECURITY.md`) |
@@ -23,7 +24,7 @@ This reviews eduWave against the security requirements for a Graphic Era deploym
 | Uploads / downloads | Validated and authorised | sec (fake OOXML, inline student PDFs, other students' files) |
 | Rate limiting | Login, enrolment keys, posts, AI, password change | — |
 | Sensitive data exposure | Errors carry only a digest; no secrets in the bundle | — |
-| Logging / audit | Append-only audit log with actor and trusted IP; grade history | **Gap:** quiz score changes and attendance need history when added |
+| Logging / audit | Append-only audit log with actor and trusted IP; grade history; attendance history (4.3) | **Gap:** quiz score changes need history when overrides are added |
 | Dependencies | `npm audit --omit=dev`: 0; CI enforces it | — |
 | Backup security | Backups contain personal data; documented as private and off-site | Encryption at rest is the operator's responsibility (document per D5) |
 
@@ -33,7 +34,7 @@ This reviews eduWave against the security requirements for a Graphic Era deploym
 |---|---|---|---|
 | Assignment grades | `grade_events` (grader, old, new, time) + `submissions.graded_by` | None | **Covered** |
 | Quiz scores | Computed once by the server; no override path, so nothing to track | — | Covered (when overrides arrive, history is required) |
-| Attendance | — | — | **Required when built:** every mark and correction keeps history (who, old, new, reason). Corrections go through request → approve |
+| Attendance | `attendance_events`, written by a database trigger on every mark and change (who, old, new, reason); append-only | Correction request → approval by `attendance.approve` (instructor or coordinator, not TA) | **Covered** (4.3) |
 | Enrolment | Audit events (`enrolment_added/removed`) | — | Covered |
 | User accounts | Audit events with actor | — | Covered |
 | Activities with student work | Deletion refused (RESTRICT) | — | Covered |

@@ -191,7 +191,7 @@ Your differentiator might be one well-chosen Advanced feature done properly, not
 | SCH-02 | Upcoming deadlines list | Core | ✅ | Next 14 days on the dashboard, urgency highlighted. |
 | SCH-03 | Live classes (Jitsi) | Standard | ✅ | Unguessable room names; join opens 15 min before start; students notified. |
 | SCH-04 | iCal export / subscribe | Advanced | ⬜ | Per-user secret feed URL. |
-| SCH-05 | Attendance | Advanced | ⬜ | |
+| SCH-05 | Attendance | Advanced | ✅ | Staff mark present/late/absent/excused per class (optionally per section); percentages and CSV; optional per-course minimum (none by default); student correction requests approved by instructors; every change kept in history. |
 
 ### 3.9 Learning tools (`TOOL`)
 
@@ -327,6 +327,7 @@ Add a row whenever a feature's status changes. Newest first.
 
 | Date | Version | Change | Feature IDs |
 |---|---|---|---|
+| 2026-11-27 | 4.3 | Attendance: class sessions, sheets, percentages, configurable minimum, correction requests with approval, append-only history, CSV (see docs/CHANGELOG.md) | SCH-05 |
 | 2026-11-27 | 4.0 | Production hardening: audit, security fixes, database-enforced integrity, transactional quizzes and grading, grade history, production configuration checks, institutional redesign, CI (see docs/CHANGELOG.md) | ADM-12, UI-05, UI-10 |
 | 2026-11-27 | 3.2 | Verified backup & restore scripts; accessibility scan in light/dark with all WCAG 2.1 A/AA violations fixed (contrast, accessible names, nested controls) | ADM-12, UI-05 |
 | 2026-11-27 | 3.1 | Stability pass: edit assignments and quizzes, graded work protected from deletion, error and not-found pages, malformed URL IDs handled, AI hidden while not configured, expired-session cleanup, stability test suite | ASG-12..13, QZ-14, UI-10 |

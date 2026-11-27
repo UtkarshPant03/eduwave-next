@@ -1,4 +1,4 @@
-import { ClipboardCheck, ClipboardList, Download, FolderPlus, LayoutList, MessagesSquare, NotebookPen, Settings2, Upload, Users, Video } from "lucide-react";
+import { CalendarCheck, ClipboardCheck, ClipboardList, Download, FolderPlus, LayoutList, MessagesSquare, NotebookPen, Settings2, Upload, Users, Video } from "lucide-react";
 import Link from "next/link";
 import { addSection, updateCourseSettings } from "@/app/actions/instructor";
 import { ActionForm } from "@/components/action-form";
@@ -12,6 +12,7 @@ import { CourseOutline } from "@/components/course/outline";
 import { Badge, Avatar, buttonClass, Card, Empty, Field, Input, Table, Textarea, Select } from "@/components/ui";
 import { courseForInstructor, courseStaffRole } from "@/lib/access";
 import { STAFF_ROLE_LABEL, staffCan } from "@/lib/auth/capabilities";
+import { InstructorAttendancePanel } from "@/components/course/attendance-panel";
 import { addCourseStaff } from "@/app/actions/institution";
 import { StaffActions } from "@/components/client/course-admin";
 import { requireInstructor } from "@/lib/auth/dal";
@@ -33,6 +34,8 @@ export default async function InstructorCoursePage({ params }: PageProps<"/instr
   const canManage = user.role === "admin" || staffCan(myRole, "course.manage");
   // Coordinators decide who teaches the course (the primary instructor is changed by department managers).
   const canManageStaff = user.role === "admin" || staffCan(myRole, "staff.manage");
+  const canMarkAttendance = user.role === "admin" || staffCan(myRole, "attendance.mark");
+  const canApproveAttendance = user.role === "admin" || staffCan(myRole, "attendance.approve");
   const now = requestTime();
   const [outline, sections, participants, book, live, staff] = await Promise.all([
     courseOutline(course.id),
@@ -193,6 +196,9 @@ export default async function InstructorCoursePage({ params }: PageProps<"/instr
             ),
           },
           { id: "discussions", label: label(MessagesSquare, "Discussions"), content: <Discussions courseId={course.id} role="instructor" now={now} /> },
+          ...(canMarkAttendance
+            ? [{ id: "attendance", label: label(CalendarCheck, "Attendance"), content: <InstructorAttendancePanel course={course} canManage={canManage} canApprove={canApproveAttendance} /> }]
+            : []),
           ...(canManage ? [{
             id: "settings",
             label: label(Settings2, "Settings"),

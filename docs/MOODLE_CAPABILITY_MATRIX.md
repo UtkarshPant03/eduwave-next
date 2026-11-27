@@ -127,8 +127,8 @@ Moodle is used as a **benchmark for academic completeness**, not as a template.
 
 | Capability | eduWave | Class | Pri |
 |---|---|---|---|
-| Sessions, statuses, reports, student history, percentages | — | **Rec** | **P1** (essential for Indian universities) |
-| Corrections, audit, policies, live-class integration | — | **Rec** | P1 / P2 |
+| Sessions, statuses, reports, student history, percentages | Have (4.3) | **Rec** | **P1** (essential for Indian universities) |
+| Corrections, audit, policies, live-class integration | Corrections with approval and history, per-course minimum (4.3); live-class integration in Phase 4 | **Rec** | P1 / P2 |
 
 ## Administration and roles
 

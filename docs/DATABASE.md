@@ -13,10 +13,44 @@ eduWave uses PostgreSQL through Drizzle ORM. The schema is in `src/db/schema.ts`
 |---|---|
 | `0000_lms.sql` | Base schema: users, sessions, courses, enrolments, sections, content, assessments, community. |
 | `0001_integrity.sql` | Database-level integrity (below). Adds columns, constraints, indexes and triggers; deletes no rows. |
+| `0002_completions_integrity.sql` | Completion ticks must reference a real item of the same course. |
+| `0003_institution.sql` | Academic structure, course staff and department roles (Phase 2; plan below). |
+| `0004_attendance.sql` | Attendance: settings, sessions, records, append-only history and correction requests (Phase 3; plan below). |
 
 ```bash
 npm run db:migrate        # applies pending migrations; running it again is a no-op
 ```
+
+### Plan for `0004_attendance` (Phase 3, written before the change)
+
+**Status.** Implemented in 4.3 as planned. Verified on PGlite and PostgreSQL 18, both as an upgrade from a 0003 database (existing rows unchanged) and as a fresh install (`test:db`, 36 checks).
+
+**Change.** Additive only: five new tables, two enums (`attendance_status`, `correction_status`) and three triggers; no existing table altered.
+
+| Table | Contents |
+|---|---|
+| `attendance_settings` | One row per course: `threshold_percent` (nullable: no hard-coded university threshold, D3) and `late_credit_percent` (how much a "late" counts: 100 = as present, 0 = as absent) |
+| `attendance_sessions` | A class meeting of a course: date and time, topic, optional class section, optional linked live class, who created it |
+| `attendance_records` | One per student per session: present, absent, late or excused, plus who marked it and when |
+| `attendance_events` | **Append-only history** written by a trigger on every insert or update of a record: old status, new status, actor, reason, time. No code path can skip it |
+| `attendance_corrections` | Student requests (requested status + reason) and staff decisions (approved/rejected, decided by, note). One pending request per student per session |
+
+**Rules enforced by the database:**
+- A student can only be marked in a session of a course they are enrolled in.
+- Percentages stay within 0–100.
+- History rows can't be edited or deleted (the same append-only trigger as the audit log).
+- A session can't be deleted once it has records.
+
+**Rollback.**
+
+```sql
+DROP TABLE attendance_events, attendance_corrections, attendance_records, attendance_sessions, attendance_settings;
+DROP FUNCTION eduwave_attendance_enrolled(), eduwave_attendance_history();
+DROP TYPE attendance_status, correction_status;
+-- then remove 0004 from drizzle.__drizzle_migrations and drizzle/meta/_journal.json
+```
+
+Rollback discards only attendance data.
 
 ### Plan for `0003_institution` (Phase 2, written before the change)
 
@@ -119,6 +153,10 @@ These hold even if application code has a bug, or someone edits the database by 
 | Questions can't change once any student has started the quiz | Trigger on `questions` |
 | Student work is never deleted as a side effect (deleting an assignment, a quiz or a user) | `ON DELETE RESTRICT` |
 | The audit log and grade history are append-only | Trigger (see *Retention* below) |
+| Attendance is only recorded for students enrolled in the session's course | Trigger on `attendance_records` |
+| Every attendance mark and change is written to an append-only history (old, new, who, reason) | Trigger on `attendance_records` → `attendance_events` |
+| One open correction request per student per session; a request is decided exactly when it has a decision time | Partial unique index; CHECK constraint |
+| An attendance session with records can't be deleted | `ON DELETE RESTRICT` |
 
 ## Transactions and locking
 
