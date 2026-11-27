@@ -162,6 +162,11 @@ describe("course staff capabilities", () => {
     assert.equal(staffCan("teaching_assistant", "discussion.moderate"), true);
     assert.equal(staffCan("teaching_assistant", "course.manage"), false);
   });
+  it("only coordinators manage the course staff", () => {
+    assert.equal(staffCan("coordinator", "staff.manage"), true);
+    assert.equal(staffCan("instructor", "staff.manage"), false);
+    assert.equal(staffCan("teaching_assistant", "staff.manage"), false);
+  });
   it("non-staff can do nothing (fails closed)", () => {
     assert.equal(staffCan(null, "course.view"), false);
     assert.equal(staffCan(undefined, "grade.view"), false);

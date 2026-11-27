@@ -2,16 +2,25 @@
 
 /**
  * Institution module: academic structure and course offerings' staff and sections.
- * Every action: admin only → validate → write (transaction where rows must agree) →
- * audit. Database rules (unique names, persona triggers, primary-instructor rule) are
- * the backstop; their errors are turned into clear messages here.
+ *
+ * Who may do what (checked here, on the server, in every action):
+ * - Institution-wide items (departments, sessions, terms, department roles): administrators.
+ * - A department's programmes, batches, class sections and course offerings: administrators
+ *   and that department's managers (department admin / HOD / dean, src/lib/auth/scope.ts).
+ * - A course's staff: additionally the course's own coordinators (capability staff.manage).
+ * Database rules (unique names, persona triggers, primary-instructor rule) are the backstop;
+ * their errors are turned into clear messages here. Every change is audited with its actor.
  */
+import { notFound } from "next/navigation";
 import { refresh } from "next/cache";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/db";
 import { audit } from "@/lib/audit";
-import { requireAdmin } from "@/lib/auth/dal";
+import { courseStaffRole } from "@/lib/access";
+import { staffCan } from "@/lib/auth/capabilities";
+import { type CurrentUser, requireAdmin, requireUser } from "@/lib/auth/dal";
+import { departmentOf, managesDepartment, requireDepartmentManager } from "@/lib/auth/scope";
 import { isForeignKeyViolation, isIntegrityTrigger, isUniqueViolation } from "@/lib/db-errors";
 import { firstIssue, type FormState } from "@/lib/form";
 
@@ -57,9 +66,9 @@ export async function createDepartment(_: FormState, formData: FormData): Promis
 }
 
 export async function createProgramme(_: FormState, formData: FormData): Promise<FormState> {
-  const admin = await requireAdmin();
   const p = parse(z.object({ departmentId: uuid, name: name(), code: optionalText(20), semesters: z.coerce.number().int().min(1).max(16) }), formData);
   if (!p.success) return { error: firstIssue(p.error) };
+  const admin = await requireDepartmentManager(p.data.departmentId);
   const fail = await guarded(() => db.insert(schema.programmes).values(p.data), "That department already has a programme with this name.");
   if (fail) return fail;
   await audit(admin.id, "structure_changed", `programme ${p.data.name}`);
@@ -92,9 +101,9 @@ export async function createTerm(_: FormState, formData: FormData): Promise<Form
 }
 
 export async function createBatch(_: FormState, formData: FormData): Promise<FormState> {
-  const admin = await requireAdmin();
   const p = parse(z.object({ programmeId: uuid, intakeYear: z.coerce.number().int().min(1990).max(2200), name: name() }), formData);
   if (!p.success) return { error: firstIssue(p.error) };
+  const admin = await requireDepartmentManager(await departmentOf("programme", p.data.programmeId));
   const fail = await guarded(() => db.insert(schema.batches).values(p.data), "That programme already has a batch for this intake year.");
   if (fail) return fail;
   await audit(admin.id, "structure_changed", `batch ${p.data.name}`);
@@ -103,9 +112,9 @@ export async function createBatch(_: FormState, formData: FormData): Promise<For
 }
 
 export async function createClassSection(_: FormState, formData: FormData): Promise<FormState> {
-  const admin = await requireAdmin();
   const p = parse(z.object({ batchId: uuid, name: name(20) }), formData);
   if (!p.success) return { error: firstIssue(p.error) };
+  const admin = await requireDepartmentManager(await departmentOf("batch", p.data.batchId));
   const fail = await guarded(() => db.insert(schema.classSections).values(p.data), "That batch already has a section with this name.");
   if (fail) return fail;
   await audit(admin.id, "structure_changed", `section ${p.data.name}`);
@@ -119,9 +128,9 @@ export async function createClassSection(_: FormState, formData: FormData): Prom
  * is kept because each term has its own row).
  */
 export async function assignStudentsToSection(_: FormState, formData: FormData): Promise<FormState> {
-  const admin = await requireAdmin();
   const p = parse(z.object({ sectionId: uuid, termId: uuid, students: z.string().max(100_000) }), formData);
   if (!p.success) return { error: firstIssue(p.error) };
+  const admin = await requireDepartmentManager(await departmentOf("section", p.data.sectionId));
   const ids = [...new Set(p.data.students.split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean))].slice(0, 2000);
   if (ids.length === 0) return { error: "Paste at least one student ID or email." };
   const emails = ids.filter((s) => s.includes("@")).map((s) => s.toLowerCase());
@@ -153,11 +162,26 @@ export async function assignStudentsToSection(_: FormState, formData: FormData):
 
 /* --------------------------- course offerings --------------------------- */
 
+/** Administrators and managers of the course's department (else 404). */
+async function requireOfferingManager(courseId: string): Promise<CurrentUser> {
+  return requireDepartmentManager(await departmentOf("course", courseId));
+}
+
+/** As above, or the course's own coordinator (capability staff.manage). */
+async function requireStaffManager(courseId: string): Promise<CurrentUser> {
+  const user = await requireUser();
+  if (await managesDepartment(user, await departmentOf("course", courseId))) return user;
+  if (user.role === "instructor" && staffCan(await courseStaffRole(user.id, courseId), "staff.manage")) return user;
+  notFound();
+}
+
 /** Links a course to a department and (optionally) a term; keeps the text fields in step. */
 export async function updateCourseAcademic(_: FormState, formData: FormData): Promise<FormState> {
-  const admin = await requireAdmin();
   const p = parse(z.object({ courseId: uuid, departmentId: uuid, termId: z.string().optional().transform((v) => v || null).pipe(uuid.nullable()) }), formData);
   if (!p.success) return { error: firstIssue(p.error) };
+  // Must manage the course's current department AND the department it moves to.
+  const admin = await requireOfferingManager(p.data.courseId);
+  if (!(await managesDepartment(admin, p.data.departmentId))) return { error: "You can only move courses into departments you manage." };
   const dept = await db.query.departments.findFirst({ where: (d, { eq }) => eq(d.id, p.data.departmentId) });
   if (!dept) return { error: "Choose a department." };
   let termText: string | undefined;
@@ -187,9 +211,9 @@ export async function updateCourseAcademic(_: FormState, formData: FormData): Pr
 const staffRole = z.enum(["coordinator", "instructor", "teaching_assistant"]);
 
 export async function addCourseStaff(_: FormState, formData: FormData): Promise<FormState> {
-  const admin = await requireAdmin();
   const p = parse(z.object({ courseId: uuid, email: z.email("Enter the staff member's email.").toLowerCase(), role: staffRole }), formData);
   if (!p.success) return { error: firstIssue(p.error) };
+  const admin = await requireStaffManager(p.data.courseId);
   const user = await db.query.users.findFirst({ where: (u, { eq }) => eq(u.email, p.data.email) });
   if (!user) return { error: "No account with that email." };
   if (user.role !== "instructor") return { error: "Course staff must have an instructor account." };
@@ -208,9 +232,9 @@ export async function addCourseStaff(_: FormState, formData: FormData): Promise<
 }
 
 export async function removeCourseStaff(courseId: string, userId: string): Promise<{ error?: string }> {
-  const admin = await requireAdmin();
   const c = uuid.parse(courseId);
   const u = uuid.parse(userId);
+  const admin = await requireStaffManager(c);
   // The database refuses to remove the primary instructor (trigger); say why.
   const fail = await guarded(
     () => db.delete(schema.courseStaff).where(and(eq(schema.courseStaff.courseId, c), eq(schema.courseStaff.userId, u))),
@@ -223,9 +247,9 @@ export async function removeCourseStaff(courseId: string, userId: string): Promi
 }
 
 export async function setPrimaryInstructor(courseId: string, userId: string): Promise<{ error?: string }> {
-  const admin = await requireAdmin();
   const c = uuid.parse(courseId);
   const u = uuid.parse(userId);
+  const admin = await requireOfferingManager(c);
   const staff = await db.query.courseStaff.findFirst({ where: (s, { and, eq }) => and(eq(s.courseId, c), eq(s.userId, u)) });
   if (!staff || staff.role === "teaching_assistant") return { error: "The primary instructor must be an instructor or coordinator on this course." };
   await db.update(schema.courses).set({ instructorId: u }).where(eq(schema.courses.id, c));
@@ -235,9 +259,11 @@ export async function setPrimaryInstructor(courseId: string, userId: string): Pr
 }
 
 export async function linkCourseSection(_: FormState, formData: FormData): Promise<FormState> {
-  const admin = await requireAdmin();
   const p = parse(z.object({ courseId: uuid, sectionId: uuid }), formData);
   if (!p.success) return { error: firstIssue(p.error) };
+  const admin = await requireOfferingManager(p.data.courseId);
+  // Sections of other departments can be linked (shared courses), but only by someone who manages them too.
+  if (!(await managesDepartment(admin, await departmentOf("section", p.data.sectionId)))) return { error: "You can only link sections of departments you manage." };
   await db.insert(schema.courseSections).values(p.data).onConflictDoNothing();
   await audit(admin.id, "structure_changed", `section linked to course ${p.data.courseId}`);
   refresh();
@@ -245,7 +271,7 @@ export async function linkCourseSection(_: FormState, formData: FormData): Promi
 }
 
 export async function unlinkCourseSection(courseId: string, sectionId: string) {
-  const admin = await requireAdmin();
+  const admin = await requireOfferingManager(uuid.parse(courseId));
   await db
     .delete(schema.courseSections)
     .where(and(eq(schema.courseSections.courseId, uuid.parse(courseId)), eq(schema.courseSections.sectionId, uuid.parse(sectionId))));
@@ -258,8 +284,8 @@ export async function unlinkCourseSection(courseId: string, sectionId: string) {
  * One INSERT … SELECT; already-enrolled students are skipped. Nobody is unenrolled.
  */
 export async function enrolLinkedSections(courseId: string): Promise<{ added?: number; error?: string }> {
-  const admin = await requireAdmin();
   const c = uuid.parse(courseId);
+  const admin = await requireOfferingManager(c);
   const course = await db.query.courses.findFirst({ where: (x, { eq }) => eq(x.id, c), columns: { id: true, termId: true, code: true, term: true } });
   if (!course) return { error: "Course not found." };
   if (!course.termId) return { error: "Link this course to a term first: section membership is recorded per term." };
@@ -276,4 +302,98 @@ export async function enrolLinkedSections(courseId: string): Promise<{ added?: n
   await audit(admin.id, "enrolment_added", `${course.code} ${course.term}: ${n} student(s) from linked sections`);
   refresh();
   return { added: n };
+}
+
+/* ---------------------------- department roles ---------------------------- */
+
+const deptRole = z.enum(["department_admin", "hod", "dean"]);
+
+/** Gives a staff member a department-scoped role (administrators only). */
+export async function assignDepartmentRole(_: FormState, formData: FormData): Promise<FormState> {
+  const admin = await requireAdmin();
+  const p = parse(z.object({ departmentId: uuid, email: z.email("Enter the staff member's email.").toLowerCase(), role: deptRole }), formData);
+  if (!p.success) return { error: firstIssue(p.error) };
+  const user = await db.query.users.findFirst({ where: (u, { eq }) => eq(u.email, p.data.email) });
+  if (!user) return { error: "No account with that email." };
+  const fail = await guarded(
+    () => db.insert(schema.roleAssignments).values({ userId: user.id, role: p.data.role, departmentId: p.data.departmentId }),
+    "That person already has this role in this department.",
+  );
+  if (fail) return fail;
+  await audit(user.id, "role_changed", `${p.data.role} of department ${p.data.departmentId}`, admin.id);
+  refresh();
+  return { success: `${user.name} is now ${p.data.role.replace("_", " ")}.` };
+}
+
+export async function removeDepartmentRole(assignmentId: string) {
+  const admin = await requireAdmin();
+  const [row] = await db.delete(schema.roleAssignments).where(eq(schema.roleAssignments.id, uuid.parse(assignmentId))).returning();
+  if (row) await audit(row.userId, "role_changed", `removed ${row.role} of department ${row.departmentId}`, admin.id);
+  refresh();
+}
+
+/* ------------------------------ edits ------------------------------ */
+
+const activeFlag = z.preprocess((v) => v === "on" || v === "true" || v === true, z.boolean());
+
+export async function updateDepartment(_: FormState, formData: FormData): Promise<FormState> {
+  const admin = await requireAdmin();
+  const p = parse(z.object({ id: uuid, name: name(), code: optionalText(12), active: activeFlag }), formData);
+  if (!p.success) return { error: firstIssue(p.error) };
+  const fail = await guarded(
+    () => db.update(schema.departments).set({ name: p.data.name, code: p.data.code?.toUpperCase() ?? null, active: p.data.active }).where(eq(schema.departments.id, p.data.id)),
+    "A department with that name or code already exists.",
+  );
+  if (fail) return fail;
+  // Courses keep a copy of the department name for display; keep it in step.
+  await db.update(schema.courses).set({ department: p.data.name }).where(eq(schema.courses.departmentId, p.data.id));
+  await audit(admin.id, "structure_changed", `department ${p.data.name}${p.data.active ? "" : " (inactive)"}`);
+  refresh();
+  return { success: "Department saved." };
+}
+
+export async function updateProgramme(_: FormState, formData: FormData): Promise<FormState> {
+  const p = parse(z.object({ id: uuid, name: name(), code: optionalText(20), semesters: z.coerce.number().int().min(1).max(16), active: activeFlag }), formData);
+  if (!p.success) return { error: firstIssue(p.error) };
+  const admin = await requireDepartmentManager(await departmentOf("programme", p.data.id));
+  const { id, ...values } = p.data;
+  const fail = await guarded(() => db.update(schema.programmes).set(values).where(eq(schema.programmes.id, id)), "That department already has a programme with this name.");
+  if (fail) return fail;
+  await audit(admin.id, "structure_changed", `programme ${p.data.name}${p.data.active ? "" : " (inactive)"}`);
+  refresh();
+  return { success: "Programme saved." };
+}
+
+export async function renameBatch(_: FormState, formData: FormData): Promise<FormState> {
+  const p = parse(z.object({ id: uuid, name: name() }), formData);
+  if (!p.success) return { error: firstIssue(p.error) };
+  const admin = await requireDepartmentManager(await departmentOf("batch", p.data.id));
+  await db.update(schema.batches).set({ name: p.data.name }).where(eq(schema.batches.id, p.data.id));
+  await audit(admin.id, "structure_changed", `batch renamed to ${p.data.name}`);
+  refresh();
+  return { success: "Batch saved." };
+}
+
+export async function renameClassSection(_: FormState, formData: FormData): Promise<FormState> {
+  const p = parse(z.object({ id: uuid, name: name(20) }), formData);
+  if (!p.success) return { error: firstIssue(p.error) };
+  const admin = await requireDepartmentManager(await departmentOf("section", p.data.id));
+  const fail = await guarded(() => db.update(schema.classSections).set({ name: p.data.name }).where(eq(schema.classSections.id, p.data.id)), "That batch already has a section with this name.");
+  if (fail) return fail;
+  await audit(admin.id, "structure_changed", `section renamed to ${p.data.name}`);
+  refresh();
+  return { success: "Section saved." };
+}
+
+export async function updateTerm(_: FormState, formData: FormData): Promise<FormState> {
+  const admin = await requireAdmin();
+  const p = parse(z.object({ id: uuid, name: name(40), startsOn: isoDate, endsOn: isoDate }), formData);
+  if (!p.success) return { error: firstIssue(p.error) };
+  if (p.data.endsOn <= p.data.startsOn) return { error: "The term must end after it starts." };
+  const { id, ...values } = p.data;
+  const fail = await guarded(() => db.update(schema.terms).set(values).where(eq(schema.terms.id, id)), "That session already has a term with this name.");
+  if (fail) return fail;
+  await audit(admin.id, "structure_changed", `term ${p.data.name}`);
+  refresh();
+  return { success: "Term saved." };
 }

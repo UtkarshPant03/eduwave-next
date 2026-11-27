@@ -113,7 +113,9 @@ Ordered by value to Graphic Era:
 | Academic hierarchy (Phase 2a) | P1 | D1 (details) | **Done** | 0003 migration, schema.ts, data/institution.ts, actions/institution.ts, /admin/structure | test:db (+7), test:institution (14) | PGlite + PostgreSQL 18 (upgrade back-fill + fresh) | Create-only: no rename, deactivate or CSV upload yet |
 | Course staff + capability permissions (Phase 2a) | P1 | hierarchy | **Done** | capabilities.ts, access.ts, instructor actions, course page, /admin/courses/[id] | test:unit (+3), test:institution (TA crafted calls) | All suites green | Staff managed by admins only (not yet by coordinators) |
 | Enrol whole class sections (Phase 2a) | P1 | hierarchy | **Done** | enrolLinkedSections | test:institution | Placed students enrolled exactly | Admin only; no automatic sync when placements change |
-| Department-scoped administration (Phase 2b) | P1 | D1 | **Next** | role_assignments (table exists) | — | — | No UI or permission checks use `role_assignments` yet |
+| Department-scoped administration (Phase 2b) | P1 | D1 | **Done** (4.2) | auth/scope.ts, actions/institution.ts, components/institution/*, /instructor/department/* | test:institution (+7), test:unit (+1), test:db (+1) | All suites green on fresh data | Deans are department-scoped like HODs (no faculty/school level yet; D1). No CSV upload for structure or placements |
+| Structure editing (Phase 2b) | P2 | — | **Done** (4.2) | updateDepartment/Programme/Term, rename batch/section | test:institution (indirect) | — | No delete; deactivate departments and programmes only |
+| Staff management by coordinators (Phase 2b) | P2 | — | **Done** (4.2) | capabilities.ts (staff.manage), course page | test:institution, test:unit | — | — |
 | Attendance | P1 | hierarchy, D3 | Planned | — | — | — | — |
 | Question bank + types + attempts | P1 | — | Planned | — | — | — | — |
 | Gradebook categories/weights | P1 | D4 | Planned | — | — | — | — |

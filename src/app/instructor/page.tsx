@@ -9,6 +9,8 @@ import { calendarEvents } from "@/lib/data/activity";
 import { gradingQueue } from "@/lib/data/assessments";
 import { listInstructorCourses } from "@/lib/data/courses";
 import { taughtCourseIds } from "@/lib/data/shared";
+import { managedDepartmentList } from "@/lib/data/institution";
+import { DEPARTMENT_ROLE_LABEL } from "@/lib/auth/scope";
 import { formatDateTime, formatRelative, requestTime } from "@/lib/format";
 import { greeting } from "@/lib/greeting";
 
@@ -18,10 +20,11 @@ export default async function InstructorHome() {
   const user = await requireInstructor();
   const now = requestTime();
   // All three in parallel: the calendar needs only course ids, not the per-course statistics.
-  const [courses, queue, events] = await Promise.all([
+  const [courses, queue, events, departments] = await Promise.all([
     listInstructorCourses(user.id),
     gradingQueue(user.id),
     taughtCourseIds(user.id).then((ids) => calendarEvents(ids, new Date(now), new Date(now + 14 * 86_400_000))),
+    managedDepartmentList(user.id),
   ]);
   const students = courses.reduce((s, c) => s + c.students, 0);
   const toGrade = courses.reduce((s, c) => s + c.toGrade, 0);
@@ -29,6 +32,20 @@ export default async function InstructorHome() {
   return (
     <>
       <PageHeader eyebrow={greeting(now)} title={user.name} subtitle="Here's what needs your attention across your courses." />
+
+      {departments.length > 0 && (
+        <Card title="Departments you manage" className="mb-6">
+          <ul className="flex flex-wrap gap-3">
+            {departments.map((d) => (
+              <li key={`${d.id}-${d.role}`}>
+                <Link href={`/instructor/department/${d.id}`} className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm hover:border-border-strong">
+                  {d.name} <Badge>{DEPARTMENT_ROLE_LABEL[d.role]}</Badge>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
 
       <div className="stagger mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatTile label="Courses" value={courses.length} icon={<BookOpen />} hint={`${courses.filter((c) => c.published).length} visible to students`} />

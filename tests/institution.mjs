@@ -44,6 +44,8 @@ async function signIn(identifier) {
   await page.waitForURL((u) => !u.pathname.startsWith("/login"));
   return page;
 }
+/** The create form inside a card, identified by its submit button (cards also hold per-row edit forms). */
+const formWith = (card, button) => card.locator("form").filter({ has: card.page().getByRole("button", { name: button }) });
 /** Submits the ActionForm inside the card titled `title` and waits for its toast/message. */
 async function submitIn(page, cardTitle, fill, button, expect) {
   const card = page.locator("section").filter({ has: page.getByRole("heading", { name: cardTitle, exact: true }) });
@@ -58,26 +60,27 @@ try {
   page = await signIn("admin@eduwave.edu");
   await page.goto(`${BASE}/admin/structure`);
   const dept = `E2E Department ${run}`;
-  check("admin adds a department", await submitIn(page, "Departments", async (c) => c.getByLabel("Name").fill(dept), "Add department", `Department "${dept}" added.`));
+  check("admin adds a department", await submitIn(page, "Departments", async (c) => formWith(c, "Add department").getByLabel("Name").fill(dept), "Add department", `Department "${dept}" added.`));
   check(
     "admin adds a programme",
     await submitIn(page, "Programmes", async (c) => {
-      await c.getByLabel("Department").selectOption({ label: dept });
-      await c.getByLabel("Name").fill(`B.Tech E2E ${run}`);
-      await c.getByLabel("Semesters").fill("8");
+      const f = formWith(c, "Add programme");
+      await f.getByLabel("Department").selectOption({ label: dept });
+      await f.getByLabel("Name").fill(`B.Tech E2E ${run}`);
+      await f.getByLabel("Semesters").fill("8");
     }, "Add programme", `Programme "B.Tech E2E ${run}" added.`),
   );
   const sessionName = `S${run}`;
   check(
     "admin adds an academic session and a term",
     (await submitIn(page, "Academic sessions and terms", async (c) => {
-      const f = c.locator("form").first();
+      const f = formWith(c, "Add session");
       await f.getByLabel("Session name").fill(sessionName);
       await f.getByLabel("Starts").fill("2030-07-01");
       await f.getByLabel("Ends").fill("2031-06-30");
     }, "Add session", `Session "${sessionName}" added.`)) &&
       (await submitIn(page, "Academic sessions and terms", async (c) => {
-        const f = c.locator("form").nth(1);
+        const f = formWith(c, "Add term");
         await f.getByLabel("Session").selectOption({ label: sessionName });
         await f.getByLabel("Term name").fill("Odd semester");
         await f.getByLabel("Starts").fill("2030-07-15");
@@ -87,13 +90,13 @@ try {
   check(
     "admin adds a batch and a class section",
     (await submitIn(page, "Batches and class sections", async (c) => {
-      const f = c.locator("form").first();
+      const f = formWith(c, "Add batch");
       await f.getByLabel("Programme").selectOption({ label: `B.Tech E2E ${run}` });
       await f.getByLabel("Intake year").fill("2030");
       await f.getByLabel("Batch name").fill(`Batch ${run}`);
     }, "Add batch", `Batch "Batch ${run}" added.`)) &&
       (await submitIn(page, "Batches and class sections", async (c) => {
-        const f = c.locator("form").nth(1);
+        const f = formWith(c, "Add section");
         await f.getByLabel("Batch").selectOption({ label: `Batch ${run}` });
         await f.getByLabel("Section name").fill("A");
       }, "Add section", `Section "A" added.`)),
@@ -201,6 +204,99 @@ try {
   );
   await owner.context().close();
   await ta.context().close();
+
+  /* ---------------- Phase 2b: department managers and coordinators ---------------- */
+  // Ids embedded (JSON-escaped) in pages: "…userId\":\"<uuid>\",\"name\":\"Karan Mehra…".
+  const idNear = (html, key, name) =>
+    html.match(new RegExp(`${key}\\\\?":\\\\?"([0-9a-f-]{36})\\\\?",\\\\?"name\\\\?":\\\\?"${name}`))?.[1];
+  const admin = await signIn("admin@eduwave.edu");
+  await admin.goto(`${BASE}/admin/structure`);
+  check(
+    "admin assigns a department administrator",
+    await submitIn(admin, "Department roles", async (c) => {
+      const f = formWith(c, "Assign role");
+      await f.getByLabel("Staff member's email").fill("rahul.verma@eduwave.edu");
+      await f.getByLabel("Department role").selectOption("department_admin");
+      await f.getByLabel("In department").selectOption({ label: dept });
+    }, "Assign role", "Dr. Rahul Verma is now department admin."),
+  );
+  // Real ids for the crafted calls below, read from the admin's CS201 page.
+  await admin.goto(`${BASE}/admin/courses/${cs201Id}`);
+  await admin.getByRole("button", { name: /Unlink section/ }).first().waitFor();
+  const cs201Html = await admin.content();
+  const cs201SectionId = cs201Html.match(/sectionId\\?":\\?"([0-9a-f-]{36})/)?.[1];
+  const karanId = idNear(cs201Html, "userId", "Karan Mehra");
+  const cs201Links = await admin.getByRole("button", { name: /Unlink section/ }).count();
+
+  const rahul = await signIn("rahul.verma@eduwave.edu");
+  await rahul.getByRole("link", { name: new RegExp(dept) }).click();
+  await rahul.waitForURL(/\/instructor\/department\/[0-9a-f-]{36}$/);
+  check(
+    "a department admin reaches their department from the dashboard and sees its courses",
+    (await seen(rahul.getByRole("heading", { name: dept }))) && (await seen(rahul.getByRole("link", { name: CODE }))),
+  );
+  check(
+    "a department admin adds a programme to their own department",
+    await submitIn(rahul, "Programmes", async (c) => {
+      const f = formWith(c, "Add programme");
+      await f.getByLabel("Name").fill(`M.Tech E2E ${run}`);
+      await f.getByLabel("Semesters").fill("4");
+    }, "Add programme", `Programme "M.Tech E2E ${run}" added.`),
+  );
+  // Crafted calls against another department's course (CS201) are refused.
+  await callAction(rahul, "unlinkCourseSection", [cs201Id, cs201SectionId], "/instructor");
+  await callAction(rahul, "removeCourseStaff", [cs201Id, karanId], "/instructor");
+  await callAction(rahul, "enrolLinkedSections", [cs201Id], "/instructor");
+  await admin.reload();
+  await admin.getByRole("button", { name: /Unlink section/ }).first().waitFor();
+  check(
+    "a department admin's crafted calls can't touch another department's course",
+    Boolean(cs201SectionId && karanId) &&
+      (await admin.getByRole("button", { name: /Unlink section/ }).count()) === cs201Links &&
+      (await seen(admin.getByRole("cell", { name: "Karan Mehra" }))),
+  );
+  const cseDeptId = await admin.locator("select[name=departmentId]").inputValue(); // CS201's department (CSE)
+  const crossDept = await rahul.goto(`${BASE}/instructor/department/${cseDeptId}`);
+  check("a department admin can't open another department's page", Boolean(cseDeptId) && crossDept.status() !== 500 && (await seen(rahul.getByText("Page not found"))));
+  await rahul.context().close();
+
+  // A coordinator manages their course's staff through the UI.
+  const sara = await signIn("sara.thomas@eduwave.edu");
+  await sara.goto(`${BASE}/instructor/courses`);
+  await sara.getByText("Technical Communication").first().click();
+  await sara.waitForURL(/\/instructor\/courses\/[0-9a-f-]{36}/);
+  await sara.getByRole("tab", { name: /Participants/ }).click();
+  const staffCard = sara.locator("section").filter({ has: sara.getByRole("heading", { name: "Course staff", exact: true }) });
+  await staffCard.getByLabel("Instructor's email").fill("karan.mehra@eduwave.edu");
+  await staffCard.getByRole("button", { name: "Add to staff" }).click();
+  const added = await seen(sara.getByText("Karan Mehra added as teaching assistant."));
+  sara.once("dialog", (d) => d.accept());
+  await staffCard.getByRole("button", { name: "Remove Karan Mehra from the course staff" }).click();
+  const removed = await sara.getByText("Karan Mehra removed.").first().waitFor({ timeout: 10000 }).then(() => true, () => false);
+  check("a course coordinator adds and removes a teaching assistant", added && removed);
+  await sara.context().close();
+
+  // An instructor who is neither the course's coordinator nor a manager of its department
+  // can't change its staff, even by crafted call. (Rahul teaches MA202 in Mathematics; his
+  // department role is in another department.) Note: Meera is HOD of CSE, so she may.
+  await admin.goto(`${BASE}/admin/courses`);
+  await admin.getByRole("link", { name: "MA202" }).click();
+  await admin.waitForURL(/\/admin\/courses\/[0-9a-f-]{36}$/);
+  const ma202Id = admin.url().split("/").pop();
+  await submitIn(admin, "Course staff", async (c) => {
+    const f = formWith(c, "Add to staff");
+    await f.getByLabel("Instructor's email").fill("karan.mehra@eduwave.edu");
+    await f.getByLabel("Role").selectOption("teaching_assistant");
+  }, "Add to staff", "Karan Mehra added as teaching assistant.");
+  const rahul2 = await signIn("rahul.verma@eduwave.edu");
+  await callAction(rahul2, "removeCourseStaff", [ma202Id, karanId], "/instructor");
+  await rahul2.context().close();
+  await admin.reload();
+  check(
+    "an instructor who isn't coordinator or department manager can't remove course staff",
+    Boolean(karanId) && (await seen(admin.getByRole("cell", { name: "Karan Mehra" }))),
+  );
+  await admin.context().close();
 } catch (err) {
   check("unexpected error", false, err.message.split("\n")[0]);
   if (page) console.log("URL at failure:", page.url());

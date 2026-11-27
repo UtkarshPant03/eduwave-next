@@ -40,7 +40,9 @@ Roles: **A** admin · **I** instructor · **S** student. "Tests" names the suite
 | Departments, programmes, sessions, terms, batches, class sections; per-term section placement | A | `/admin/structure`, `actions/institution.ts` | institution tables (0003) | db, institution | **Verified** (4.1) | Create-only; no rename, deactivate or bulk CSV upload |
 | Course staff: coordinator, instructor, TA; capability-based permissions | A, I | `capabilities.ts`, `access.ts`, `/admin/courses/[id]` | course_staff | unit, institution, sec | **Verified** (4.1) | Staff managed by admins only |
 | Course offering linked to department and term; enrol whole linked sections | A | `/admin/courses/[id]`, `enrolLinkedSections` | courses.department_id/term_id, course_sections | institution | **Verified** (4.1) | No automatic re-sync when placements change |
-| Department-scoped administration | — | `role_assignments` (table only) | role_assignments | — | **Partial** | Phase 2b: UI and permission checks |
+| Department-scoped administration (department admin, HOD, dean) | A, I | `auth/scope.ts`, `/instructor/department/*`, "Department roles" | role_assignments | institution (incl. crafted cross-department calls) | **Verified** (4.2) | Deans are department-scoped (no school/faculty level) |
+| Edit structure: rename, term dates, deactivate departments and programmes | A, dept | `StructureView` edit rows | — | — | **Implemented** (4.2) | Not directly covered by browser tests |
+| Coordinators manage course staff | I (coordinator) | course page staff card | course_staff | institution, unit | **Verified** (4.2) | — |
 | Admin course detail (academic links, staff, sections) | A | `/admin/courses/[id]` | — | institution, a11y | **Verified** (4.1) | Title, code and credits are still edited by staff on the course settings page |
 | Reports (participation, activity, grades) | — | — | — | — | **Missing** | Only per-course gradebook CSV and quiz CSV |
 | Backup / restore (database level) | A (ops) | `scripts/backup.ts`, `restore.ts` | all | manual (PGlite and PostgreSQL) | **Verified** (manually) | No per-course backup or duplication |

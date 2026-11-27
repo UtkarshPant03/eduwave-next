@@ -201,6 +201,11 @@ async function main() {
     (tx) => tx.insert(schema.studentSections).values({ studentId: instructor.id, termId: term1.id, sectionId: secX.id }),
     /different kind of account/i,
   );
+  await expectReject(
+    "a student account can't hold a department role",
+    (tx) => tx.insert(schema.roleAssignments).values({ userId: student.id, role: "department_admin", departmentId: dept.id }),
+    /different kind of account/i,
+  );
   await db.insert(schema.studentSections).values({ studentId: student.id, termId: term1.id, sectionId: secX.id });
   await expectReject(
     "a student has one section per term",

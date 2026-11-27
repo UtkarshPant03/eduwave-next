@@ -1,5 +1,37 @@
 # Changelog
 
+## 4.2.0: Phase 2b, department-scoped administration (2026-11-27)
+
+No schema change: this release uses the `role_assignments` table from 0003.
+
+**Department roles**
+- Administrators assign department administrator, HOD or dean to staff accounts, on the new "Department roles" card in Academic structure.
+- Role holders get a **department area**, `/instructor/department/[id]`, reached from their dashboard. There they manage their department's programmes, batches, class sections, section placements and course offerings: staff, linked sections and section enrolment. Other departments return 404, whether through the page or a crafted call.
+
+**Authorization**
+- Institution actions are scoped:
+  - administrators: departments, sessions, terms and department roles;
+  - department managers: their department's structure and offerings (moving a course between departments needs both);
+  - course coordinators: their course's staff (new capability `staff.manage`).
+- Changing the primary instructor stays with department managers and administrators.
+
+**Editing the structure**
+- Rename departments, programmes, batches and sections; edit terms (name and dates).
+- Deactivate departments and programmes. Renaming a department updates its courses' display name.
+
+**Interface**
+- Shared `StructureView` and `CourseOfferingView` components, used by both the admin console and the department area.
+- The course page's staff card lets coordinators add and remove staff.
+
+**Sample data**
+- Dr. Meera Iyer is HOD of Computer Science & Engineering.
+- Prof. Sara Thomas coordinates HS101.
+
+**Tests**
+- `test:institution` grows from 14 to 21 checks. The new ones cover department-admin positive paths and cross-department crafted calls, plus coordinator positive and negative cases.
+- `test:unit` goes to 25 and `test:db` to 30.
+- The accessibility scan covers the department page.
+
 ## 4.1.0: Phase 2a, institutional foundation (2026-11-27)
 
 **Academic structure (migration `0003_institution`, additive)**

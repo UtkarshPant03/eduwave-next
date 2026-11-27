@@ -1,15 +1,15 @@
 "use client";
 
-import { Star, UserMinus, Users, X } from "lucide-react";
+import { ShieldOff, Star, UserMinus, Users, X } from "lucide-react";
 import { useTransition } from "react";
 import { toast } from "sonner";
-import { enrolLinkedSections, removeCourseStaff, setPrimaryInstructor, unlinkCourseSection } from "@/app/actions/institution";
+import { enrolLinkedSections, removeCourseStaff, removeDepartmentRole, setPrimaryInstructor, unlinkCourseSection } from "@/app/actions/institution";
 import { Button } from "@/components/ui";
 
 const iconBtn = "grid size-9 place-items-center rounded-lg text-muted hover:bg-surface-2 hover:text-foreground disabled:opacity-50";
 
 /** Make primary / remove, for one course-staff row (admin course page). */
-export function StaffActions({ courseId, userId, name, primary, canBePrimary }: { courseId: string; userId: string; name: string; primary: boolean; canBePrimary: boolean }) {
+export function StaffActions({ courseId, userId, name, primary, canBePrimary }: { courseId: string; userId: string; name: string; primary: boolean; /** Only department managers and admins may change the primary instructor. */ canBePrimary: boolean }) {
   const [pending, start] = useTransition();
   if (primary) return null;
   return (
@@ -86,5 +86,22 @@ export function EnrolSectionsButton({ courseId, disabledReason }: { courseId: st
       </Button>
       {disabledReason && <p className="text-xs text-muted">{disabledReason}</p>}
     </div>
+  );
+}
+
+export function RemoveRoleButton({ id, label }: { id: string; label: string }) {
+  const [pending, start] = useTransition();
+  return (
+    <button
+      className={`${iconBtn} hover:!bg-danger/10 hover:!text-danger`}
+      disabled={pending}
+      aria-label={`Remove ${label}`}
+      title="Remove role"
+      onClick={() => {
+        if (confirm(`Remove the ${label}?`)) start(async () => void (await removeDepartmentRole(id)));
+      }}
+    >
+      <ShieldOff className="size-4" />
+    </button>
   );
 }

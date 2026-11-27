@@ -9,9 +9,11 @@ import { CourseHero } from "@/components/course/course-hero";
 import { Discussions } from "@/components/course/discussions";
 import { GradebookTable } from "@/components/course/gradebook-table";
 import { CourseOutline } from "@/components/course/outline";
-import { Badge, Avatar, buttonClass, Card, Empty, Field, Input, Table, Textarea } from "@/components/ui";
+import { Badge, Avatar, buttonClass, Card, Empty, Field, Input, Table, Textarea, Select } from "@/components/ui";
 import { courseForInstructor, courseStaffRole } from "@/lib/access";
 import { STAFF_ROLE_LABEL, staffCan } from "@/lib/auth/capabilities";
+import { addCourseStaff } from "@/app/actions/institution";
+import { StaffActions } from "@/components/client/course-admin";
 import { requireInstructor } from "@/lib/auth/dal";
 import { COURSE_COLORS, coverFor } from "@/lib/course-colors";
 import { courseOutline, courseParticipants, listSections, courseStaffList } from "@/lib/data/courses";
@@ -27,7 +29,10 @@ export default async function InstructorCoursePage({ params }: PageProps<"/instr
   const user = await requireInstructor();
   const course = await courseForInstructor(user, courseId, "course.view");
   // Teaching assistants can view, grade and moderate, but not change the course.
-  const canManage = user.role === "admin" || staffCan(await courseStaffRole(user.id, course.id), "course.manage");
+  const myRole = await courseStaffRole(user.id, course.id);
+  const canManage = user.role === "admin" || staffCan(myRole, "course.manage");
+  // Coordinators decide who teaches the course (the primary instructor is changed by department managers).
+  const canManageStaff = user.role === "admin" || staffCan(myRole, "staff.manage");
   const now = requestTime();
   const [outline, sections, participants, book, live, staff] = await Promise.all([
     courseOutline(course.id),
@@ -131,10 +136,28 @@ export default async function InstructorCoursePage({ params }: PageProps<"/instr
                             <span className="block truncate font-medium">{m.name}</span>
                             <span className="block truncate text-xs text-muted">{m.email}</span>
                           </span>
-                          <Badge>{m.primary ? "Primary instructor" : STAFF_ROLE_LABEL[m.role]}</Badge>
+                          <span className="flex items-center gap-1">
+                            <Badge>{m.primary ? "Primary instructor" : STAFF_ROLE_LABEL[m.role]}</Badge>
+                            {canManageStaff && <StaffActions courseId={course.id} userId={m.userId} name={m.name} primary={m.primary} canBePrimary={false} />}
+                          </span>
                         </li>
                       ))}
                     </ul>
+                    {canManageStaff && (
+                      <div className="mt-4 border-t border-border pt-4">
+                        <ActionForm action={addCourseStaff} submitLabel="Add to staff">
+                          <input type="hidden" name="courseId" value={course.id} />
+                          <Field label="Instructor's email"><Input name="email" type="email" required /></Field>
+                          <Field label="Role">
+                            <Select name="role" defaultValue="teaching_assistant">
+                              <option value="teaching_assistant">Teaching assistant</option>
+                              <option value="instructor">Instructor</option>
+                              <option value="coordinator">Course coordinator</option>
+                            </Select>
+                          </Field>
+                        </ActionForm>
+                      </div>
+                    )}
                   </Card>
                   {canManage && (
                   <>

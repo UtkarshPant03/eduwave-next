@@ -68,6 +68,8 @@ for (const theme of ["light", "dark"]) {
 
   const ins = await (await context(theme)).newPage();
   await signIn(ins, "meera.iyer@eduwave.edu");
+  await ins.goto(`${BASE}/instructor`);
+  const deptPage = await hrefOf(ins, "/instructor/department/", "Computer Science"); // Meera is HOD (seed)
   await ins.goto(`${BASE}/instructor/courses`);
   const course = await hrefOf(ins, "/instructor/courses/", "Data Structures");
   await ins.goto(BASE + course);
@@ -75,7 +77,7 @@ for (const theme of ["light", "dark"]) {
   const quiz1 = await hrefOf(ins, "/instructor/quizzes/", "Quiz 1");
   for (const p of [
     "/instructor", "/instructor/courses", course, `${course}/assignments/new`, `${course}/quizzes/new`, lab2, `${lab2}/edit`,
-    quiz1, `${quiz1}/edit`, "/instructor/calendar", "/instructor/boards", "/instructor/account", "/instructor/courses/not-a-course",
+    quiz1, `${quiz1}/edit`, deptPage, "/instructor/calendar", "/instructor/boards", "/instructor/account", "/instructor/courses/not-a-course",
   ]) await scan(ins, p, theme);
   await ins.context().close();
 

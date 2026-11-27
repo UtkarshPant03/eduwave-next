@@ -50,9 +50,9 @@ All sample accounts use the password **`eduwave2026`**.
 | Role | Sign in with | Notes |
 |---|---|---|
 | Administrator | `admin@eduwave.edu` | Users, courses, audit log |
-| Instructor | `meera.iyer@eduwave.edu` | Teaches CS201 and CS204 (has a grading queue) |
+| Instructor | `meera.iyer@eduwave.edu` | Teaches CS201 and CS204 (has a grading queue); HOD of Computer Science & Engineering (department area on her dashboard) |
 | Instructor | `rahul.verma@eduwave.edu` | Teaches MA202 |
-| Instructor | `sara.thomas@eduwave.edu` | Teaches HS101 |
+| Instructor | `sara.thomas@eduwave.edu` | Coordinates HS101 (can manage its staff) |
 | Teaching assistant | `karan.mehra@eduwave.edu` | TA on CS201: can grade and moderate, can't change the course |
 | Student | `24CS1001` … `24CS1012` | Student ID or email; enrolled in 3–4 courses |
 

@@ -8,13 +8,14 @@
  *               rahul.verma@eduwave.edu (MA202)
  *               sara.thomas@eduwave.edu (HS101)
  *   TA          karan.mehra@eduwave.edu (teaching assistant on CS201)
+ *   (Meera Iyer is also HOD of Computer Science & Engineering; Sara Thomas coordinates HS101.)
  *   Student     24CS1001 … 24CS1012   (or their emails)
  *
  * Sample passwords are deliberately simple; real accounts must pass the password policy.
  */
 import bcrypt from "bcryptjs";
 import { randomBytes } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db, schema } from "../src/db";
 import { deploymentMode } from "../src/lib/env";
 import { SAMPLE_PASSWORD } from "../src/lib/sample-data";
@@ -109,6 +110,12 @@ async function main() {
       { courseId: prob.id, sectionId: secB.id },
     ]);
     await tx.insert(schema.courseStaff).values({ courseId: ds.id, userId: karan.id, role: "teaching_assistant" });
+    // Department role and a course coordinator (sample data).
+    await tx.insert(schema.roleAssignments).values({ userId: meera.id, role: "hod", departmentId: cse.id });
+    await tx
+      .update(schema.courseStaff)
+      .set({ role: "coordinator" })
+      .where(and(eq(schema.courseStaff.courseId, comm.id), eq(schema.courseStaff.userId, sara.id)));
 
     // Enrolments: everyone in CS201/MA202/HS101, the first 9 in CS204.
     await tx.insert(schema.enrollments).values([
