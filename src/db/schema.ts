@@ -405,6 +405,8 @@ export const assignments = pgTable(
     maxPoints: integer().notNull().default(100),
     // Submissions are accepted this many days after dueAt, marked late.
     lateDays: integer().notNull().default(0),
+    // Files a student may attach to one submission (1 = the pre-4.5 behaviour).
+    maxFiles: integer().notNull().default(1),
     createdAt: createdAt(),
   },
   (t) => [
@@ -412,6 +414,7 @@ export const assignments = pgTable(
     index().on(t.sectionId),
     sameCourseSection("assignments_section_same_course_fk", t),
     check("assignments_points_check", sql`${t.maxPoints} > 0 and ${t.lateDays} >= 0`),
+    check("assignments_max_files_check", sql`${t.maxFiles} between 1 and 20`),
   ],
 );
 
@@ -426,6 +429,8 @@ export const submissions = pgTable(
     studentId: uuid()
       .notNull()
       .references(() => users.id, { onDelete: "restrict" }),
+    // text, file_id and submitted_at mirror the LATEST version (4.5+: see submission_versions);
+    // file_id is that version's first file. Kept so existing queries work unchanged.
     text: text(),
     fileId: uuid().references(() => files.id, { onDelete: "set null" }),
     submittedAt: ts().notNull().defaultNow(),
@@ -444,6 +449,62 @@ export const submissions = pgTable(
     // grade <= max_points is a cross-table rule: enforced by a trigger (0001_integrity.sql).
     check("submissions_grade_check", sql`${t.grade} is null or ${t.grade} >= 0`),
   ],
+);
+
+/**
+ * Every (re)submission is a read-only version (append-only, trigger in 0006). The latest
+ * one is the version that gets graded; a graded submission accepts no new versions.
+ */
+export const submissionVersions = pgTable(
+  "submission_versions",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    submissionId: uuid()
+      .notNull()
+      .references(() => submissions.id, { onDelete: "restrict" }),
+    versionNumber: integer().notNull(),
+    text: text(),
+    submittedAt: ts().notNull().defaultNow(),
+  },
+  (t) => [
+    unique("submission_versions_number_unique").on(t.submissionId, t.versionNumber),
+    check("submission_versions_number_check", sql`${t.versionNumber} >= 1`),
+  ],
+);
+
+/** The files of one version. A file kept from the previous version is linked again, not copied. */
+export const submissionFiles = pgTable(
+  "submission_files",
+  {
+    versionId: uuid()
+      .notNull()
+      .references(() => submissionVersions.id, { onDelete: "restrict" }),
+    fileId: uuid()
+      .notNull()
+      .references(() => files.id, { onDelete: "restrict" }),
+    position: integer().notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.versionId, t.fileId] }), index().on(t.fileId), check("submission_files_position_check", sql`${t.position} >= 0`)],
+);
+
+/** Files a grader attaches to their feedback (shown to the student once graded). */
+export const feedbackFiles = pgTable(
+  "feedback_files",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    submissionId: uuid()
+      .notNull()
+      .references(() => submissions.id, { onDelete: "restrict" }),
+    fileId: uuid()
+      .notNull()
+      .unique()
+      .references(() => files.id, { onDelete: "restrict" }),
+    uploadedBy: uuid()
+      .notNull()
+      .references((): AnyPgColumn => users.id, { onDelete: "restrict" }),
+    createdAt: createdAt(),
+  },
+  (t) => [index().on(t.submissionId)],
 );
 
 /**

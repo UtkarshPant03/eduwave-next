@@ -17,9 +17,46 @@ eduWave uses PostgreSQL through Drizzle ORM. The schema is in `src/db/schema.ts`
 | `0003_institution.sql` | Academic structure, course staff and department roles (Phase 2; plan below). |
 | `0004_attendance.sql` | Attendance: settings, sessions, records, append-only history and correction requests (Phase 3; plan below). |
 | `0005_question_bank.sql` | Question bank, question types and points, random slots, open date, multiple attempts (Phase 3; plan below). |
+| `0006_assignment_versions.sql` | Assignments: several files per submission, submission versions, feedback files (Phase 3; plan below). |
 
 ```bash
 npm run db:migrate        # applies pending migrations; running it again is a no-op
+```
+
+### Plan for `0006_assignment_versions` (Phase 3, written before the change)
+
+**Status.** Implemented in 4.5.0 (in QA). Verified on PGlite: fresh install (migrate + seed) and an upgrade of a 0005 database holding a graded submission with a file and an ungraded text-only one (submissions and grade history unchanged; two version-1 rows and one version file created; the new triggers refused a version on the graded submission, a gap in version numbers, edits/deletes of versions, deleting a version's file and another student's file). **Not yet verified on PostgreSQL.**
+
+**Design choice: `submissions` stays the graded row; versions hang off it.** One `submissions` row per student per assignment remains (grade, feedback, grader, grade history and the grading queue are untouched). Every (re)submission adds a read-only **version** under it. `submissions.submitted_at` and `submissions.text` keep mirroring the **latest** version, and `submissions.file_id` its first file, so every existing query (gradebook, queue, progress, late flags) keeps working unchanged. Files of earlier versions are no longer deleted on resubmission; a file kept from one version to the next is referenced again, not copied.
+
+**Change.** Additive: one new column with a default that keeps today's behaviour, three new tables, triggers.
+
+| Object | Change |
+|---|---|
+| `assignments.max_files` | New, `integer NOT NULL DEFAULT 1`, CHECK 1–20. 1 = today's behaviour (one file) |
+| `submission_versions` (new) | `submission_id` (RESTRICT), `version_number` (≥ 1, UNIQUE per submission), `text`, `submitted_at`. Late is derived as today (`submitted_at > due_at`) |
+| `submission_files` (new) | `(version_id, file_id)` primary key, `position`. Both FKs RESTRICT |
+| `feedback_files` (new) | `submission_id` (RESTRICT), `file_id` (UNIQUE, RESTRICT), `uploaded_by`, `created_at` |
+
+**Back-fill.** Every existing submission becomes **version 1** with its text and `submitted_at`; its `file_id` (if any) becomes that version's only file. Grades, feedback, `grade_events`, the grading queue and the gradebook read `submissions` and are therefore unchanged.
+
+**Rules enforced by the database:**
+- Versions and their file links are **append-only** (the existing `eduwave_append_only()` trigger), and RESTRICT foreign keys mean a submission, version or file that is part of student work can't be deleted as a side effect.
+- A version can't be added to a graded submission; version numbers are consecutive per submission (trigger).
+- A version's files belong to the assignment's course and were uploaded by the submitting student; a version holds at most the assignment's `max_files` files at the time it is written (trigger; lowering `max_files` later never touches older versions).
+- A feedback file belongs to the submission's course (trigger).
+
+**Rollback.** Discards versions before the latest one and all feedback files (take a backup first).
+
+```sql
+DROP TRIGGER submission_versions_append_only ON submission_versions;  DROP TRIGGER submission_files_append_only ON submission_files;
+DROP TRIGGER submission_versions_rules ON submission_versions;  DROP TRIGGER submission_files_rules ON submission_files;
+DROP TRIGGER feedback_files_rules ON feedback_files;
+DROP FUNCTION eduwave_submission_version_rules(), eduwave_submission_file_rules(), eduwave_feedback_file_rules();
+DROP TABLE feedback_files, submission_files, submission_versions;
+ALTER TABLE assignments DROP CONSTRAINT assignments_max_files_check, DROP COLUMN max_files;
+-- files that only older versions or feedback used stay in `files` (delete them by hand if wanted)
+-- then remove 0006 from drizzle.__drizzle_migrations and drizzle/meta/_journal.json
 ```
 
 ### Plan for `0005_question_bank` (Phase 3, written before the change)
@@ -221,6 +258,9 @@ These hold even if application code has a bug, or someone edits the database by 
 | Every attendance mark and change is written to an append-only history (old, new, who, reason) | Trigger on `attendance_records` → `attendance_events` |
 | One open correction request per student per session; a request is decided exactly when it has a decision time | Partial unique index; CHECK constraint |
 | An attendance session with records can't be deleted | `ON DELETE RESTRICT` |
+| Submission versions and their file links can't be edited or deleted; a graded submission accepts no new version; version numbers are consecutive | Append-only trigger; trigger on `submission_versions` |
+| A version's files belong to the assignment's course, were uploaded by the submitting student, and number at most `max_files` | Trigger on `submission_files` |
+| A feedback file belongs to the submission's course; files used by versions or feedback can't be deleted | Trigger on `feedback_files`; `ON DELETE RESTRICT` |
 
 ## Transactions and locking
 
@@ -229,7 +269,7 @@ These hold even if application code has a bug, or someone edits the database by 
 | Saving a quiz answer | Locks the attempt row (`FOR UPDATE`) and checks it is still open, in the same transaction. |
 | Finalising an attempt | Same lock, then grades the answers to the questions the attempt was given (by type, in `src/lib/questions.ts`) and records the score. A save and a finalisation can't interleave. Tested with real concurrency on PostgreSQL (before 4.4) and PGlite. |
 | Starting a quiz vs. editing its questions | The quiz row is locked `FOR SHARE` / `FOR UPDATE`, so no attempt snapshots questions (or random picks) that are about to change. A further attempt starts only after the previous one is closed; the attempt number is checked under the same lock and by UNIQUE constraints. |
-| Submitting vs. grading an assignment | Both lock the submission row. A grade also carries the version (submission time) the grader saw, and is refused if the student resubmitted meanwhile. |
+| Submitting vs. grading an assignment | Both lock the submission row. A submission adds its version (numbered under that lock) in the same transaction; files inserted for it are rolled back if the submission was graded meanwhile. A grade also carries the version (submission time) the grader saw, and is refused if the student resubmitted meanwhile. |
 | Grading | Grade, grader and a `grade_events` history row are written in one transaction. |
 | Deleting an activity | Course ownership check, student-work check and delete happen in one transaction with a row lock. `ON DELETE RESTRICT` is the backstop. |
 
