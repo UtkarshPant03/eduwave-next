@@ -5,13 +5,14 @@ import { aiEnabled } from "@/lib/ai";
 import { requireInstructor } from "@/lib/auth/dal";
 import { listSections } from "@/lib/data/courses";
 import { bankForBuilder } from "@/lib/data/question-bank";
+import { gradeCategoryChoice } from "@/lib/data/gradebook";
 import { routeIds } from "@/lib/route-ids";
 
 export default async function NewQuizPage({ params }: PageProps<"/instructor/courses/[courseId]/quizzes/new">) {
   const { courseId } = routeIds(await params);
   const user = await requireInstructor();
   const course = await courseForInstructor(user, courseId);
-  const [sections, bank] = await Promise.all([listSections(course.id), bankForBuilder(course.id)]);
+  const [sections, bank, gradeCategories] = await Promise.all([listSections(course.id), bankForBuilder(course.id), gradeCategoryChoice(course.id)]);
   return (
     <>
       <PageHeader
@@ -19,7 +20,7 @@ export default async function NewQuizPage({ params }: PageProps<"/instructor/cou
         title="New quiz"
         subtitle="Timed and graded on the server. Students are notified when you publish."
       />
-      <QuizBuilder courseId={course.id} sections={sections} aiAvailable={aiEnabled()} bank={bank} />
+      <QuizBuilder courseId={course.id} sections={sections} aiAvailable={aiEnabled()} bank={bank} gradeCategories={gradeCategories} />
     </>
   );
 }

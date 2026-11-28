@@ -5,6 +5,7 @@ import { aiEnabled } from "@/lib/ai";
 import { requireInstructor } from "@/lib/auth/dal";
 import { getQuizForEdit } from "@/lib/data/assessments";
 import { bankForBuilder } from "@/lib/data/question-bank";
+import { gradeCategoryChoice } from "@/lib/data/gradebook";
 import { listSections } from "@/lib/data/courses";
 import { requestTime } from "@/lib/format";
 import { routeIds } from "@/lib/route-ids";
@@ -15,7 +16,7 @@ export default async function EditQuizPage({ params }: PageProps<"/instructor/qu
   const { quizId } = routeIds(await params);
   const user = await requireInstructor();
   const { course, quiz, questions, slots, attemptCount, attemptsUsed, questionCount } = await getQuizForEdit(user, quizId);
-  const [sections, bank] = await Promise.all([listSections(course.id), bankForBuilder(course.id)]);
+  const [sections, bank, gradeCategories] = await Promise.all([listSections(course.id), bankForBuilder(course.id), gradeCategoryChoice(course.id)]);
   return (
     <>
       <PageHeader
@@ -33,6 +34,7 @@ export default async function EditQuizPage({ params }: PageProps<"/instructor/qu
         sections={sections}
         aiAvailable={aiEnabled()}
         bank={bank}
+        gradeCategories={gradeCategories}
         initial={{
           id: quiz.id,
           title: quiz.title,
@@ -44,6 +46,7 @@ export default async function EditQuizPage({ params }: PageProps<"/instructor/qu
           shuffle: quiz.shuffle,
           maxAttempts: quiz.maxAttempts,
           gradingMethod: quiz.gradingMethod,
+          gradeCategoryId: quiz.gradeCategoryId,
           questions: questions.map((q) => ({
             type: q.type,
             prompt: q.prompt,

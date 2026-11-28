@@ -24,7 +24,8 @@ export default async function StudentCoursePage({ params }: PageProps<"/student/
   const now = requestTime();
   const [outline, book, instructor, live, [announcement]] = await Promise.all([
     courseOutline(course.id, user.id),
-    gradebook(course.id, user.id),
+    // Student view: unreleased items carry no value (see lib/data/gradebook.ts).
+    gradebook(course.id, { audience: "student", studentId: user.id }),
     db.query.users.findFirst({ where: (u, { eq }) => eq(u.id, course.instructorId), columns: { name: true } }),
     db.query.liveSessions.findMany({ where: (l, { eq }) => eq(l.courseId, course.id) }),
     recentAnnouncements([course.id], 1),
@@ -69,15 +70,20 @@ export default async function StudentCoursePage({ params }: PageProps<"/student/
             id: "grades",
             label: <><ClipboardCheck className="size-4" /> Grades</>,
             content: (
+              <div className="grid gap-6 xl:grid-cols-[1fr_20rem] [&>*]:min-w-0">
               <Card
                 title="Your grades"
-                description="Missing work counts as 0 once the deadline passes. Assignments count once graded."
+                description={
+                  book.method === "weighted"
+                    ? "Missing work counts as 0 once the deadline passes. Assignments count once graded. Your total is weighted by category (see the breakdown)."
+                    : "Missing work counts as 0 once the deadline passes. Assignments count once graded."
+                }
                 action={mine?.total.letter && <span className="bg-brand rounded-xl px-3 py-1.5 text-sm font-semibold text-white">{mine.total.letter.letter} · {formatPercent(mine.total.percent)}</span>}
               >
                 {!mine || book.items.length === 0 ? (
                   <Empty>No graded work yet.</Empty>
                 ) : (
-                  <Table head={["Item", "Due", "Status", "Score"]}>
+                  <Table head={book.categories.length ? ["Item", "Category", "Due", "Status", "Score"] : ["Item", "Due", "Status", "Score"]}>
                     {book.items.map((it) => {
                       const c = mine.cells[it.id];
                       return (
@@ -86,20 +92,54 @@ export default async function StudentCoursePage({ params }: PageProps<"/student/
                             <Link href={`/student/${it.kind === "assignment" ? "assignments" : "quizzes"}/${it.id}`} className="font-medium hover:text-accent">{it.title}</Link>
                             <span className="block text-xs capitalize text-muted">{it.kind}</span>
                           </td>
+                          {book.categories.length > 0 && <td className="px-2 py-2 text-muted">{book.categories.find((k) => k.id === c.categoryId)?.name ?? "–"}</td>}
                           <td className="px-2 py-2 text-muted">{formatDateTime(it.due)}</td>
                           <td className="px-2 py-2">
                             {c.status === "graded" && <Badge tone="success">Graded</Badge>}
                             {c.status === "submitted" && <Badge tone="accent">Awaiting grade</Badge>}
                             {c.status === "missing" && <Badge tone="danger">Missing</Badge>}
                             {c.status === "upcoming" && <Badge>Upcoming</Badge>}
+                            {c.status === "unreleased" && <Badge>Not released</Badge>}
                           </td>
-                          <td className="px-2 py-2 tabular-nums">{c.earned != null ? `${c.earned} / ${c.possible}` : `– / ${c.possible}`}</td>
+                          <td className="px-2 py-2 tabular-nums">
+                            {c.status === "unreleased" ? `– / ${c.possible}` : c.earned != null ? `${c.earned} / ${c.possible}` : `– / ${c.possible}`}
+                            {c.overridden && <span className="ml-1 text-xs text-muted">(adjusted by your instructor)</span>}
+                          </td>
                         </tr>
                       );
                     })}
                   </Table>
                 )}
+                {mine?.total.overridden && <p className="mt-3 text-xs text-muted">Your course total was set by your instructor.</p>}
               </Card>
+              <div className="space-y-6">
+                {book.categories.length > 0 && mine && (
+                  <Card title="By category" description={book.method === "weighted" ? "Your total weights each category that has graded work; weights are re-scaled over those categories. Released items only." : "Released items only. This course's total is the sum of points."}>
+                    <ul className="space-y-2 text-sm">
+                      {mine.total.categories.map((k) => (
+                        <li key={k.id} className="flex items-center justify-between gap-2 rounded-lg bg-surface-2 px-3 py-2">
+                          <span>
+                            <span className="font-medium">{k.name}</span>
+                            {book.method === "weighted" && <span className="block text-xs text-muted">Weight {k.weight}%</span>}
+                          </span>
+                          <span className="tabular-nums">{k.percent == null ? "–" : formatPercent(k.percent)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </Card>
+                )}
+                <Card title="Grade scale" description="This course's scale.">
+                  <ul className="grid grid-cols-2 gap-1.5 text-xs">
+                    {book.scale.map((g) => (
+                      <li key={g.letter} className="flex justify-between rounded-lg bg-surface-2 px-2.5 py-1.5">
+                        <span className="font-semibold">{g.letter} <span className="font-normal text-muted">({g.points})</span></span>
+                        <span className="text-muted">≥ {g.min}%</span>
+                      </li>
+                    ))}
+                  </ul>
+                </Card>
+              </div>
+              </div>
             ),
           },
         ]}

@@ -1,4 +1,4 @@
-import { CalendarCheck, ClipboardCheck, ClipboardList, Download, FolderPlus, LayoutList, Library, MessagesSquare, NotebookPen, Settings2, Upload, Users, Video } from "lucide-react";
+import { CalendarCheck, ClipboardCheck, ClipboardList, Download, FolderPlus, LayoutList, Library, MessagesSquare, NotebookPen, PenLine, Settings2, SlidersHorizontal, Upload, Users, Video } from "lucide-react";
 import Link from "next/link";
 import { addSection, updateCourseSettings } from "@/app/actions/instructor";
 import { ActionForm } from "@/components/action-form";
@@ -36,12 +36,13 @@ export default async function InstructorCoursePage({ params }: PageProps<"/instr
   const canManageStaff = user.role === "admin" || staffCan(myRole, "staff.manage");
   const canMarkAttendance = user.role === "admin" || staffCan(myRole, "attendance.mark");
   const canApproveAttendance = user.role === "admin" || staffCan(myRole, "attendance.approve");
+  const canEditGrades = user.role === "admin" || staffCan(myRole, "grade.edit");
   const now = requestTime();
   const [outline, sections, participants, book, live, staff] = await Promise.all([
     courseOutline(course.id),
     listSections(course.id),
     courseParticipants(course.id),
-    gradebook(course.id),
+    gradebook(course.id, { audience: "staff" }),
     db.query.liveSessions.findMany({ where: (l, { eq }) => eq(l.courseId, course.id) }),
     courseStaffList(course.id),
   ]);
@@ -193,8 +194,22 @@ export default async function InstructorCoursePage({ params }: PageProps<"/instr
             content: (
               <Card
                 title="Gradebook"
-                description="Missing work after the deadline counts as 0; ungraded submissions don't count yet."
-                action={<a href={`/instructor/courses/${course.id}/gradebook/export`} className={buttonClass("secondary", "sm")}><Download className="size-3.5" /> Export CSV</a>}
+                description={
+                  book.method === "weighted"
+                    ? "Missing work after the deadline counts as 0; ungraded submissions don't count yet. Weighted total: each category's percentage times its weight, re-scaled over the categories that have counted work."
+                    : "Missing work after the deadline counts as 0; ungraded submissions don't count yet."
+                }
+                action={
+                  <span className="flex flex-wrap justify-end gap-2">
+                    {canManage && (
+                      <Link href={`/instructor/courses/${course.id}/gradebook/setup`} className={buttonClass("secondary", "sm")}><SlidersHorizontal className="size-3.5" /> Gradebook setup</Link>
+                    )}
+                    {canEditGrades && (
+                      <Link href={`/instructor/courses/${course.id}/gradebook/overrides`} className={buttonClass("secondary", "sm")}><PenLine className="size-3.5" /> Overrides</Link>
+                    )}
+                    <a href={`/instructor/courses/${course.id}/gradebook/export`} className={buttonClass("secondary", "sm")}><Download className="size-3.5" /> Export CSV</a>
+                  </span>
+                }
               >
                 <GradebookTable book={book} />
               </Card>

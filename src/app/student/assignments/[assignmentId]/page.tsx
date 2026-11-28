@@ -13,11 +13,11 @@ import { routeIds } from "@/lib/route-ids";
 export default async function StudentAssignmentPage({ params }: PageProps<"/student/assignments/[assignmentId]">) {
   const { assignmentId } = routeIds(await params);
   const user = await requireStudent();
-  const { course, assignment, submission, versions, feedbackFiles } = await getAssignmentForStudent(user, assignmentId);
+  const { course, assignment, submission, versions, feedbackFiles, released, locked } = await getAssignmentForStudent(user, assignmentId);
   const latest = versions.at(-1) ?? null;
   const now = requestTime();
   const win = assignmentWindow(assignment, now);
-  const graded = submission?.grade != null;
+  const graded = released && submission?.grade != null;
 
   return (
     <>
@@ -32,7 +32,12 @@ export default async function StudentAssignmentPage({ params }: PageProps<"/stud
             <Markdown text={assignment.instructions} className="prose-chat text-sm" />
           </Card>
 
-          {graded && (
+          {!released && submission && (
+            <p className="flex items-center gap-2 rounded-xl border border-border bg-surface-2 p-3 text-sm text-muted">
+              <MessageSquareQuote className="size-4 shrink-0" aria-hidden /> Not released: grades and feedback for this assignment will appear here when your instructors release them.
+            </p>
+          )}
+          {graded && submission && (
             <Card title="Feedback" icon={<MessageSquareQuote />} className="border-success/40">
               <div className="flex flex-wrap items-center gap-5">
                 <ProgressRing value={(submission.grade! / assignment.maxPoints) * 100} size={72} label="Score" />
@@ -66,6 +71,8 @@ export default async function StudentAssignmentPage({ params }: PageProps<"/stud
             )}
             {graded ? (
               <p className="text-sm text-muted">This submission has been graded and is now final.</p>
+            ) : locked ? (
+              <p className="text-sm text-muted">Your instructors have started marking this submission, so it can no longer be changed. Grades are not released yet.</p>
             ) : win.open ? (
               <SubmissionForm
                 assignmentId={assignment.id}

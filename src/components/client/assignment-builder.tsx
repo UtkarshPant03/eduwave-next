@@ -7,7 +7,20 @@ import { Markdown } from "@/components/markdown";
 import { Button, Card, Field, FormMessage, Input, Select, Textarea } from "@/components/ui";
 import { LocalDateTimeInput } from "./local-datetime-input";
 
-export type AssignmentInitial = { id: string; title: string; instructions: string; sectionId: string | null; dueAt: string; maxPoints: number; lateDays: number; maxFiles: number };
+export type AssignmentInitial = {
+  id: string;
+  title: string;
+  instructions: string;
+  sectionId: string | null;
+  dueAt: string;
+  maxPoints: number;
+  lateDays: number;
+  maxFiles: number;
+  gradeCategoryId: string | null;
+};
+
+/** The course's gradebook categories, and whether the course total uses them (then one is required). */
+export type GradeCategoryChoice = { categories: { id: string; name: string }[]; weighted: boolean };
 
 /**
  * Assignment editor with a live Markdown preview (same renderer students see).
@@ -18,12 +31,14 @@ export function AssignmentBuilder({
   sections,
   initial,
   minPoints = 1,
+  gradeCategories = { categories: [], weighted: false },
 }: {
   courseId: string;
   sections: { id: string; title: string }[];
   initial?: AssignmentInitial;
   /** The highest grade already awarded: the maximum can't go below it. */
   minPoints?: number;
+  gradeCategories?: GradeCategoryChoice;
 }) {
   const [error, setError] = useState<string>();
   const [text, setText] = useState(initial?.instructions ?? "");
@@ -46,6 +61,8 @@ export function AssignmentBuilder({
             maxPoints: Number(fd.get("maxPoints")),
             lateDays: Number(fd.get("lateDays")),
             maxFiles: Number(fd.get("maxFiles")),
+            // Not sent when the course has no categories (an edit then keeps the current one).
+            gradeCategoryId: fd.has("gradeCategoryId") ? String(fd.get("gradeCategoryId")) : undefined,
           };
           // On success both actions redirect; a value comes back only on failure.
           const res = initial ? await updateAssignment({ id: initial.id, ...fields }) : await createAssignment({ courseId, ...fields });
@@ -90,11 +107,31 @@ export function AssignmentBuilder({
             <Field label="Maximum files per submission" hint="1 to 20. Files sent together must be 8 MB or smaller in total. Lowering this never removes files already submitted.">
               <Input name="maxFiles" type="number" min={1} max={20} defaultValue={initial?.maxFiles ?? 1} required />
             </Field>
+            <GradeCategorySelect choice={gradeCategories} current={initial?.gradeCategoryId ?? null} />
           </div>
         </Card>
         <FormMessage state={{ error }} />
         <Button disabled={pending} className="w-full">{initial ? (pending ? "Saving…" : "Save changes") : pending ? "Publishing…" : "Publish & notify students"}</Button>
       </div>
     </form>
+  );
+}
+
+/**
+ * "Gradebook category" select (shown only when the course has categories). In a course
+ * whose total uses weighted categories a category is required; otherwise it's optional.
+ */
+export function GradeCategorySelect({ choice, current }: { choice: GradeCategoryChoice; current: string | null }) {
+  if (choice.categories.length === 0) return null;
+  return (
+    <Field
+      label="Gradebook category"
+      hint={choice.weighted ? "Required: this course's total uses weighted categories." : "Optional: used when the course total uses weighted categories."}
+    >
+      <Select name="gradeCategoryId" defaultValue={current ?? (choice.weighted ? choice.categories[0].id : "")} required={choice.weighted}>
+        {!choice.weighted && <option value="">None</option>}
+        {choice.categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+      </Select>
+    </Field>
   );
 }

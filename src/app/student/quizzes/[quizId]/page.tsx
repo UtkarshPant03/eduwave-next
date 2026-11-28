@@ -15,7 +15,7 @@ export default async function StudentQuizPage({ params, searchParams }: PageProp
   const sp = await searchParams;
   const requested = typeof sp.attempt === "string" && /^\d{1,2}$/.test(sp.attempt) ? Number(sp.attempt) : undefined;
   const user = await requireStudent();
-  const { course, quiz, attempt, attempts, graded, canStart, notOpenYet, questionCount, questions, revealAnswers } = await getStudentQuiz(user, quizId, requested);
+  const { course, quiz, attempt, attempts, graded, released, canStart, notOpenYet, questionCount, questions, revealAnswers } = await getStudentQuiz(user, quizId, requested);
   const now = requestTime();
   const multi = quiz.maxAttempts > 1;
   const finished = attempts.filter((a) => a.submittedAt);
@@ -85,18 +85,20 @@ export default async function StudentQuizPage({ params, searchParams }: PageProp
 
   // 3. Submitted (reviewing one finished attempt)
   const percent = ((attempt.score ?? 0) / Math.max(attempt.total, 1)) * 100;
-  const message = revealAnswers
-    ? "Answers and explanations are shown below."
-    : "Answers and explanations will be available after the quiz deadline.";
+  const message = !released
+    ? "Your answers are submitted. Your score, the answers and explanations will appear when your instructors release the grades."
+    : revealAnswers
+      ? "Answers and explanations are shown below."
+      : "Answers and explanations will be available after the quiz deadline.";
   return (
     <>
       <PageHeader {...header} />
       <Card className="mb-6">
         <div className="flex flex-wrap items-center gap-6">
-          <ProgressRing value={percent} size={96} label="Score" />
+          {released && <ProgressRing value={percent} size={96} label="Score" />}
           <div>
             <p className="text-sm text-muted">{multi ? `Your score (attempt ${attempt.attemptNumber})` : "Your score"}</p>
-            <p className="text-3xl font-semibold tabular-nums">{attempt.score} / {attempt.total}</p>
+            <p className="text-3xl font-semibold tabular-nums">{released ? `${attempt.score} / ${attempt.total}` : "Not released"}</p>
             {multi && graded && finished.length > 1 && (
               <p className="mt-1 text-sm">
                 Counts towards your grade: <strong className="tabular-nums">{graded.score} / {graded.total}</strong> ({GRADING_METHOD_LABEL[quiz.gradingMethod].toLowerCase()})
@@ -111,7 +113,7 @@ export default async function StudentQuizPage({ params, searchParams }: PageProp
             </form>
           )}
         </div>
-        {!revealAnswers && (
+        {released && !revealAnswers && (
           <p className="mt-4 flex items-center gap-2 rounded-xl bg-surface-2 p-3 text-sm text-muted">
             <Info className="size-4 shrink-0" /> Correct answers and explanations appear after the deadline ({formatDateTime(quiz.deadline)}), once everyone has finished.
           </p>
@@ -124,7 +126,7 @@ export default async function StudentQuizPage({ params, searchParams }: PageProp
             {attempts.map((a) => (
               <tr key={a.id}>
                 <td className="px-2 py-2">Attempt {a.attemptNumber}</td>
-                <td className="px-2 py-2 tabular-nums">{a.submittedAt ? `${a.score} / ${a.total}` : <Badge tone="accent">In progress</Badge>}</td>
+                <td className="px-2 py-2 tabular-nums">{!a.submittedAt ? <Badge tone="accent">In progress</Badge> : released ? `${a.score} / ${a.total}` : "Not released"}</td>
                 <td className="px-2 py-2 text-muted">{a.submittedAt ? formatDateTime(a.submittedAt) : "–"}</td>
                 <td className="px-2 py-2 text-right">
                   {a.submittedAt && a.attemptNumber !== attempt.attemptNumber && (

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { aiDraftQuestions, createQuiz, updateQuiz } from "@/app/actions/instructor";
 import { Badge, Button, Card, Field, FormMessage, Input, Select, Textarea } from "@/components/ui";
 import { answerSummary, GRADING_METHOD_LABEL, GRADING_METHODS, MAX_ATTEMPTS, QUESTION_TYPE_LABEL, type GradingMethod } from "@/lib/questions";
+import { GradeCategorySelect, type GradeCategoryChoice } from "./assignment-builder";
 import { Dialog } from "./dialog";
 import { LocalDateTimeInput } from "./local-datetime-input";
 import { blankDraft, draftFromColumns, draftProblem, draftToInput, QuestionFields, type QuestionColumnsLike, type QuestionDraft } from "./question-fields";
@@ -31,6 +32,7 @@ export type QuizInitial = {
   shuffle: boolean;
   maxAttempts: number;
   gradingMethod: GradingMethod;
+  gradeCategoryId: string | null;
   questions: (QuestionColumnsLike & { position: number; bankQuestionId: string | null })[];
   slots: { position: number; categoryId: string; categoryName: string; pickCount: number; points: number }[];
   /** Questions each attempt is given (fixed + random picks). */
@@ -50,12 +52,14 @@ export function QuizBuilder({
   aiAvailable,
   bank,
   initial,
+  gradeCategories = { categories: [], weighted: false },
 }: {
   courseId: string;
   sections: { id: string; title: string }[];
   aiAvailable: boolean;
   bank: { categories: BankCategory[]; questions: BankPick[] };
   initial?: QuizInitial;
+  gradeCategories?: GradeCategoryChoice;
 }) {
   const locked = (initial?.attemptCount ?? 0) > 0;
   const [items, setItems] = useState<DraftItem[]>(() => {
@@ -142,6 +146,8 @@ export function QuizBuilder({
         shuffle,
         maxAttempts: Number(maxAttempts),
         gradingMethod: String(form.get("gradingMethod") ?? "highest") as GradingMethod,
+        // Not sent when the course has no gradebook categories (an edit then keeps the current one).
+        gradeCategoryId: form.has("gradeCategoryId") ? String(form.get("gradeCategoryId")) : undefined,
       };
       const questions = items.flatMap((x, position) => (x.kind === "question" ? [{ ...draftToInput(x), position, bankQuestionId: x.bankQuestionId ?? undefined }] : []));
       const slots = items.flatMap((x, position) =>
@@ -196,6 +202,9 @@ export function QuizBuilder({
             </Field>
           </div>
         </div>
+        {gradeCategories.categories.length > 0 && (
+          <div className="mt-3 sm:w-1/2 sm:pr-1.5"><GradeCategorySelect choice={gradeCategories} current={initial?.gradeCategoryId ?? null} /></div>
+        )}
         <div className="mt-3"><Field label="Instructions (optional)"><Input name="description" maxLength={2000} defaultValue={initial?.description ?? ""} placeholder="Closed book." /></Field></div>
         <label className="mt-4 flex items-center gap-3 text-sm">
           <input type="checkbox" checked={shuffle} onChange={(e) => setShuffle(e.target.checked)} className="size-4 accent-[var(--accent)]" />

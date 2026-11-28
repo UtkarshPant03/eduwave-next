@@ -8,24 +8,33 @@ import { requireStudent } from "@/lib/auth/dal";
 import { listStudentCourses } from "@/lib/data/courses";
 import { gradebook } from "@/lib/data/gradebook";
 import { formatPercent } from "@/lib/format";
-import { GRADE_SCALE } from "@/lib/grading";
+import type { GradeBand } from "@/lib/grading";
 
 export const metadata: Metadata = { title: "Grades" };
 
 export default async function GradesPage() {
   const user = await requireStudent();
   const courses = await listStudentCourses(user.id);
-  const books = await Promise.all(courses.map(async (c) => ({ course: c, row: (await gradebook(c.id, user.id)).rows[0] })));
+  const books = await Promise.all(
+    courses.map(async (c) => {
+      // Student view: unreleased items carry no value and don't count (lib/data/gradebook.ts).
+      const book = await gradebook(c.id, { audience: "student", studentId: user.id });
+      return { course: c, row: book.rows[0], scale: book.scale };
+    }),
+  );
   const graded = books.filter((b) => b.row?.total.letter);
-  // Credit-weighted grade-point average over courses with a grade so far.
+  // Credit-weighted grade-point average over courses with a grade so far (grade points from each course's scale).
   const credits = graded.reduce((s, b) => s + b.course.credits, 0);
   const gpa = credits ? graded.reduce((s, b) => s + b.row!.total.letter!.points * b.course.credits, 0) / credits : null;
+  // One scale card if every course uses the same scale (the default unless a course changed it).
+  const scaleKey = (s: GradeBand[]) => s.map((b) => `${b.letter}:${b.min}:${b.points}`).join("|");
+  const sharedScale = books.length && books.every((b) => scaleKey(b.scale) === scaleKey(books[0].scale)) ? books[0].scale : null;
 
   return (
     <>
       <PageHeader eyebrow="Learning" title="Grades" subtitle="Running totals for each course. Final grades are confirmed by your instructors." />
       <div className="stagger mb-6 grid grid-cols-2 gap-4 lg:grid-cols-3">
-        <StatTile label="Running GPA (10-point)" value={gpa == null ? "–" : gpa.toFixed(2)} icon={<GraduationCap />} hint="Credit-weighted, provisional" />
+        <StatTile label="Running GPA (10-point)" value={gpa == null ? "–" : gpa.toFixed(2)} icon={<GraduationCap />} hint="Credit-weighted, provisional; grade points from each course's scale" />
         <StatTile label="Courses with grades" value={`${graded.length} / ${courses.length}`} icon={<BookOpen />} tone="neutral" />
         <StatTile label="Credits enrolled" value={courses.reduce((s, c) => s + c.credits, 0)} icon={<Award />} tone="success" />
       </div>
@@ -61,14 +70,18 @@ export default async function GradesPage() {
               </Card>
             )}
             <Card title="Grade scale">
-              <ul className="grid grid-cols-2 gap-1.5 text-xs">
-                {GRADE_SCALE.map((g) => (
-                  <li key={g.letter} className="flex justify-between rounded-lg bg-surface-2 px-2.5 py-1.5">
-                    <span className="font-semibold">{g.letter} <span className="font-normal text-muted">({g.points})</span></span>
-                    <span className="text-muted">≥ {g.min}%</span>
-                  </li>
-                ))}
-              </ul>
+              {sharedScale ? (
+                <ul className="grid grid-cols-2 gap-1.5 text-xs">
+                  {sharedScale.map((g) => (
+                    <li key={g.letter} className="flex justify-between rounded-lg bg-surface-2 px-2.5 py-1.5">
+                      <span className="font-semibold">{g.letter} <span className="font-normal text-muted">({g.points})</span></span>
+                      <span className="text-muted">≥ {g.min}%</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-muted">Your courses use different grade scales. Each course&apos;s scale is on its Grades tab.</p>
+              )}
             </Card>
           </div>
         </div>
