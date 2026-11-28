@@ -50,6 +50,23 @@ async function checkSection(courseId: string, sectionId: string | null) {
   return s ? s.id : null;
 }
 
+/**
+ * The gradebook category for a new or edited assignment/quiz. `undefined` keeps `current`
+ * (callers that don't send the field). In a course that uses weighted categories every
+ * item needs one (see docs/DATABASE.md, 0007); the category must be this course's own.
+ */
+async function resolveGradeCategory(courseId: string, requested: string | null | undefined, current: string | null = null): Promise<{ id: string | null } | { error: string }> {
+  const id = requested === undefined ? current : requested;
+  if (id) {
+    const cat = await db.query.gradeCategories.findFirst({ where: (c, { and, eq }) => and(eq(c.id, id), eq(c.courseId, courseId)), columns: { id: true } });
+    if (!cat) return { error: "That gradebook category doesn't exist in this course." };
+    return { id: cat.id };
+  }
+  const course = await db.query.courses.findFirst({ where: (c, { eq }) => eq(c.id, courseId), columns: { gradeTotalMethod: true } });
+  if (course?.gradeTotalMethod === "weighted") return { error: "This course uses weighted categories: choose a gradebook category." };
+  return { id: null };
+}
+
 /* ------------------------------ course settings ------------------------------ */
 
 const settingsInput = z.object({
@@ -315,6 +332,8 @@ const assignmentInput = z.object({
   maxPoints: z.coerce.number().int().min(1).max(1000),
   lateDays: z.coerce.number().int().min(0).max(30),
   maxFiles: z.coerce.number().int("Whole numbers only.").min(1, "Allow at least 1 file.").max(MAX_FILES_LIMIT, `At most ${MAX_FILES_LIMIT} files.`).default(1),
+  // Gradebook category (4.6). Omitted = none (or unchanged when editing).
+  gradeCategoryId: optionalUuid.optional(),
 });
 
 export async function createAssignment(input: z.input<typeof assignmentInput>): Promise<FormState> {
@@ -323,9 +342,11 @@ export async function createAssignment(input: z.input<typeof assignmentInput>): 
   const { course } = await ownCourse(parsed.data.courseId);
   const a = parsed.data;
   if (a.dueAt.getTime() <= Date.now()) return { error: "The due date must be in the future." };
+  const category = await resolveGradeCategory(course.id, a.gradeCategoryId);
+  if ("error" in category) return { error: category.error };
   const [row] = await db
     .insert(schema.assignments)
-    .values({ ...a, courseId: course.id, sectionId: await checkSection(course.id, a.sectionId) })
+    .values({ ...a, courseId: course.id, sectionId: await checkSection(course.id, a.sectionId), gradeCategoryId: category.id })
     .returning({ id: schema.assignments.id });
   await notifyCourse(course.id, { title: `${course.code}: new assignment`, body: `${a.title} · due ${formatDateTime(a.dueAt)}`, link: `/student/assignments/${row.id}` });
   redirect(`/instructor/assignments/${row.id}`);
@@ -346,12 +367,22 @@ export async function updateAssignment(input: z.input<typeof assignmentUpdate>):
   if (!existing) return { error: "Assignment not found." };
   const course = await courseForInstructor(user, existing.courseId);
 
-  const [{ top }] = await db
-    .select({ top: sql<string | null>`max(${schema.submissions.grade})` })
-    .from(schema.submissions)
-    .where(eq(schema.submissions.assignmentId, existing.id));
+  const [[{ top }], [{ topOverride }]] = await Promise.all([
+    db
+      .select({ top: sql<string | null>`max(${schema.submissions.grade})` })
+      .from(schema.submissions)
+      .where(eq(schema.submissions.assignmentId, existing.id)),
+    db
+      .select({ topOverride: sql<string | null>`max(${schema.gradeOverrides.points})` })
+      .from(schema.gradeOverrides)
+      .where(eq(schema.gradeOverrides.assignmentId, existing.id)),
+  ]);
   if (top != null && a.maxPoints < Number(top))
     return { error: `A student already has ${top} points, so the maximum can't be lower than that.` };
+  if (topOverride != null && a.maxPoints < Number(topOverride))
+    return { error: `A gradebook override gives a student ${Number(topOverride)} points, so the maximum can't be lower than that.` };
+  const category = await resolveGradeCategory(course.id, a.gradeCategoryId, existing.gradeCategoryId);
+  if ("error" in category) return { error: category.error };
 
   await db
     .update(schema.assignments)
@@ -364,6 +395,7 @@ export async function updateAssignment(input: z.input<typeof assignmentUpdate>):
       lateDays: a.lateDays,
       // Lowering it never touches versions already submitted (they keep their files).
       maxFiles: a.maxFiles,
+      gradeCategoryId: category.id,
     })
     .where(eq(schema.assignments.id, existing.id));
 
@@ -432,6 +464,13 @@ export async function gradeSubmission(_: FormState, formData: FormData): Promise
   });
   if (error) return { error };
 
+  // Unreleased grades never reach the student, notifications included: they hear about it
+  // when the course releases the item's grades (saveGradeItems).
+  const [released] = await db.select({ released: schema.assignments.gradesReleased }).from(schema.assignments).where(eq(schema.assignments.id, row.a.id));
+  if (!released?.released) {
+    refresh();
+    return { success: "Grade saved. Grades for this assignment aren't released yet, so the student hasn't been notified." };
+  }
   await notifyUser(row.s.studentId, {
     title: `${course.code}: "${row.a.title}" graded`,
     body: `${grade} / ${row.a.maxPoints}`,
@@ -543,6 +582,8 @@ const quizInput = z.object({
   shuffle: z.boolean().default(true),
   maxAttempts: z.coerce.number().int().min(1, "Allow at least 1 attempt.").max(MAX_ATTEMPTS, `At most ${MAX_ATTEMPTS} attempts.`).default(1),
   gradingMethod: z.enum(GRADING_METHODS).default("highest"),
+  // Gradebook category (4.6). Omitted = none (or unchanged when editing).
+  gradeCategoryId: optionalUuid.optional(),
   questions: z.array(quizQuestionInput).max(150).default([]),
   slots: z.array(slotInput).max(20).default([]),
 });
@@ -640,6 +681,8 @@ export async function createQuiz(draft: QuizDraft): Promise<FormState> {
   const problem = contentProblem(quiz.questions, quiz.slots) ?? timingProblem(quiz);
   if (problem) return { error: problem };
   const sectionId = await checkSection(course.id, quiz.sectionId);
+  const category = await resolveGradeCategory(course.id, quiz.gradeCategoryId);
+  if ("error" in category) return { error: category.error };
 
   let quizId: string;
   try {
@@ -657,6 +700,7 @@ export async function createQuiz(draft: QuizDraft): Promise<FormState> {
           shuffle: quiz.shuffle,
           maxAttempts: quiz.maxAttempts,
           gradingMethod: quiz.gradingMethod,
+          gradeCategoryId: category.id,
         })
         .returning({ id: schema.quizzes.id });
       const error = await writeQuizContent(tx, course.id, row.id, quiz.questions, quiz.slots);
@@ -710,6 +754,8 @@ export async function updateQuiz(draft: z.input<typeof quizUpdate>): Promise<For
   if (problem) return { error: problem };
 
   const sectionId = await checkSection(course.id, q.sectionId);
+  const category = await resolveGradeCategory(course.id, q.gradeCategoryId, existing.gradeCategoryId);
+  if ("error" in category) return { error: category.error };
   let result: FormState | null;
   try {
     result = await db.transaction(async (tx) => {
@@ -738,6 +784,7 @@ export async function updateQuiz(draft: z.input<typeof quizUpdate>): Promise<For
           shuffle: q.shuffle,
           maxAttempts: q.maxAttempts,
           gradingMethod: q.gradingMethod,
+          gradeCategoryId: category.id,
         })
         .where(eq(schema.quizzes.id, existing.id));
       if (replacing) {

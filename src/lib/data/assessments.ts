@@ -49,8 +49,12 @@ export async function getStudentQuiz(user: CurrentUser, quizId: string, attemptN
 
   const current = mine.find((a) => !a.submittedAt) ?? null;
   const finished = mine.filter((a) => a.submittedAt);
-  const attempt = current ?? (attemptNumber ? finished.find((a) => a.attemptNumber === attemptNumber) : undefined) ?? finished.at(-1) ?? null;
-  const graded = gradedResult(finished.map((a) => ({ attemptNumber: a.attemptNumber, score: a.score ?? 0, total: a.total })), quiz.gradingMethod);
+  const picked = current ?? (attemptNumber ? finished.find((a) => a.attemptNumber === attemptNumber) : undefined) ?? finished.at(-1) ?? null;
+  // Unreleased grades (4.6): scores never leave the server, and neither do the answer key
+  // and per-question marks (they would give the score away).
+  const released = quiz.gradesReleased;
+  const attempt = picked && !released ? { ...picked, score: null } : picked;
+  const graded = released ? gradedResult(finished.map((a) => ({ attemptNumber: a.attemptNumber, score: a.score ?? 0, total: a.total })), quiz.gradingMethod) : null;
 
   const now = Date.now();
   const notOpenYet = quiz.opensAt != null && quiz.opensAt.getTime() > now;
@@ -58,7 +62,7 @@ export async function getStudentQuiz(user: CurrentUser, quizId: string, attemptN
 
   // Reveal only after the deadline AND the grace period: otherwise a student who has
   // finished could pass the key to someone still saving their last answers.
-  const revealAnswers = Boolean(attempt?.submittedAt) && quiz.deadline.getTime() + GRACE_MS < now;
+  const revealAnswers = released && Boolean(attempt?.submittedAt) && quiz.deadline.getTime() + GRACE_MS < now;
   const questionRows = await db.query.questions.findMany({
     where: (q, { eq }) => eq(q.quizId, quizId),
     orderBy: (q, { asc }) => asc(q.position),
@@ -74,8 +78,9 @@ export async function getStudentQuiz(user: CurrentUser, quizId: string, attemptN
     course,
     quiz,
     attempt,
-    attempts: mine.map((a) => ({ id: a.id, attemptNumber: a.attemptNumber, score: a.score, total: a.total, startedAt: a.startedAt, submittedAt: a.submittedAt })),
+    attempts: mine.map((a) => ({ id: a.id, attemptNumber: a.attemptNumber, score: released ? a.score : null, total: a.total, startedAt: a.startedAt, submittedAt: a.submittedAt })),
     graded,
+    released,
     canStart,
     notOpenYet,
     questionCount: await questionsPerAttempt(quiz.id),
@@ -271,11 +276,17 @@ export async function getAssignmentForStudent(user: CurrentUser, assignmentId: s
   const assignment = await db.query.assignments.findFirst({ where: (a, { eq }) => eq(a.id, assignmentId) });
   if (!assignment) notFound();
   const course = await courseForStudent(user, assignment.courseId);
-  const submission = (await db.query.submissions.findFirst({ where: (s, { and, eq }) => and(eq(s.assignmentId, assignmentId), eq(s.studentId, user.id)) })) ?? null;
-  const versions = submission ? ((await versionsOf([submission])).get(submission.id) ?? []) : [];
+  const row = (await db.query.submissions.findFirst({ where: (s, { and, eq }) => and(eq(s.assignmentId, assignmentId), eq(s.studentId, user.id)) })) ?? null;
+  // Unreleased grades (4.6) never leave the server: the grade, feedback, grader and
+  // feedback files are removed here, before anything is rendered. `locked` still tells the
+  // page that the work can't be changed any more (it has been graded).
+  const released = assignment.gradesReleased;
+  const submission = row && !released ? { ...row, grade: null, feedback: null, gradedAt: null, gradedBy: null } : row;
+  const locked = row?.grade != null;
+  const versions = row ? ((await versionsOf([row])).get(row.id) ?? []) : [];
   // Feedback files reach the student only with the grade (like the feedback text).
-  const feedbackFiles = submission?.grade != null ? ((await feedbackFilesOf([submission.id])).get(submission.id) ?? []) : [];
-  return { course, assignment, submission, versions, feedbackFiles };
+  const feedbackFiles = released && row?.grade != null ? ((await feedbackFilesOf([row.id])).get(row.id) ?? []) : [];
+  return { course, assignment, submission, versions, feedbackFiles, released, locked };
 }
 
 /** Grading view: every enrolled student with their submission (if any), its versions and feedback files. */

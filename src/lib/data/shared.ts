@@ -102,7 +102,16 @@ export async function getFileForUser(user: CurrentUser, fileId: string) {
         .select({ id: schema.feedbackFiles.id })
         .from(schema.feedbackFiles)
         .innerJoin(schema.submissions, eq(schema.submissions.id, schema.feedbackFiles.submissionId))
-        .where(and(eq(schema.feedbackFiles.fileId, fileId), eq(schema.submissions.studentId, user.id), isNotNull(schema.submissions.grade)));
+        // Only once the assignment's grades are released (4.6), like the grade itself.
+        .innerJoin(schema.assignments, eq(schema.assignments.id, schema.submissions.assignmentId))
+        .where(
+          and(
+            eq(schema.feedbackFiles.fileId, fileId),
+            eq(schema.submissions.studentId, user.id),
+            isNotNull(schema.submissions.grade),
+            eq(schema.assignments.gradesReleased, true),
+          ),
+        );
       if (!ownFeedback) return null;
     }
   }
