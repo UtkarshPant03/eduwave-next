@@ -1,4 +1,4 @@
-import { CalendarCheck, ClipboardCheck, ClipboardList, Download, FolderPlus, LayoutList, MessagesSquare, NotebookPen, Settings2, Upload, Users, Video } from "lucide-react";
+import { CalendarCheck, ClipboardCheck, ClipboardList, Download, FolderPlus, LayoutList, Library, MessagesSquare, NotebookPen, Settings2, Upload, Users, Video } from "lucide-react";
 import Link from "next/link";
 import { addSection, updateCourseSettings } from "@/app/actions/instructor";
 import { ActionForm } from "@/components/action-form";
@@ -59,16 +59,21 @@ export default async function InstructorCoursePage({ params }: PageProps<"/instr
         students={participants.length}
         breadcrumbs={[{ label: "My courses", href: "/instructor/courses" }, { label: course.code }]}
         actions={
-          canManage && (
           <>
-            <Link href={`/instructor/courses/${course.id}/assignments/new`} className={buttonClass()}>
-              <NotebookPen className="size-4" /> New assignment
-            </Link>
-            <Link href={`/instructor/courses/${course.id}/quizzes/new`} className={buttonClass("secondary")}>
-              <ClipboardList className="size-4" /> New quiz
+            {canManage && (
+              <>
+                <Link href={`/instructor/courses/${course.id}/assignments/new`} className={buttonClass()}>
+                  <NotebookPen className="size-4" /> New assignment
+                </Link>
+                <Link href={`/instructor/courses/${course.id}/quizzes/new`} className={buttonClass("secondary")}>
+                  <ClipboardList className="size-4" /> New quiz
+                </Link>
+              </>
+            )}
+            <Link href={`/instructor/courses/${course.id}/bank`} className={buttonClass("secondary")}>
+              <Library className="size-4" /> Question bank
             </Link>
           </>
-          )
         }
       />
 

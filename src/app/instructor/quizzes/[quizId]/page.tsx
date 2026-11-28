@@ -1,10 +1,11 @@
 import Link from "next/link";
-import { CheckCircle2, Clock, Download, Pencil, Target, Users } from "lucide-react";
+import { CheckCircle2, Clock, Download, Pencil, Shuffle, Target, Users } from "lucide-react";
 import { ScoreDistribution } from "@/components/client/charts";
 import { Badge, buttonClass, Card, Empty, PageHeader, StatTile, Table } from "@/components/ui";
 import { requireInstructor } from "@/lib/auth/dal";
 import { getQuizAnalytics } from "@/lib/data/assessments";
 import { formatDateTime, formatPercent } from "@/lib/format";
+import { GRADING_METHOD_LABEL, QUESTION_TYPE_LABEL } from "@/lib/questions";
 import { routeIds } from "@/lib/route-ids";
 
 const BUCKETS = ["0–20%", "21–40%", "41–60%", "61–80%", "81–100%"];
@@ -12,14 +13,18 @@ const BUCKETS = ["0–20%", "21–40%", "41–60%", "61–80%", "81–100%"];
 export default async function QuizAnalyticsPage({ params }: PageProps<"/instructor/quizzes/[quizId]">) {
   const { quizId } = routeIds(await params);
   const user = await requireInstructor();
-  const { course, quiz, questionStats, results, classSize } = await getQuizAnalytics(user, quizId);
+  const { course, quiz, slots, questionStats, results, classSize, questionCount } = await getQuizAnalytics(user, quizId);
 
-  const submitted = results.filter((r) => r.submittedAt);
+  const submitted = results.filter((r) => r.score != null);
   const percents = submitted.map((r) => ((r.score ?? 0) / Math.max(r.total, 1)) * 100);
   const avgPercent = percents.length ? percents.reduce((a, b) => a + b, 0) / percents.length : null;
-  const avgSeconds = submitted.length ? submitted.reduce((s, r) => s + (r.submittedAt!.getTime() - r.startedAt.getTime()) / 1000, 0) / submitted.length : null;
+  const finishedAttempts = results.flatMap((r) => r.attempts.filter((a) => a.submittedAt));
+  const avgSeconds = finishedAttempts.length
+    ? finishedAttempts.reduce((s, a) => s + (a.submittedAt!.getTime() - a.startedAt.getTime()) / 1000, 0) / finishedAttempts.length
+    : null;
   const buckets = BUCKETS.map((range, i) => ({ range, students: percents.filter((p) => (i === 0 ? p <= 20 : p > i * 20 && p <= (i + 1) * 20)).length }));
   const hardest = [...questionStats].filter((q) => q.answered > 0).sort((a, b) => a.correct / a.answered - b.correct / b.answered)[0];
+  const multi = quiz.maxAttempts > 1;
 
   return (
     <>
@@ -27,7 +32,13 @@ export default async function QuizAnalyticsPage({ params }: PageProps<"/instruct
         breadcrumbs={[{ label: "My courses", href: "/instructor/courses" }, { label: course.code, href: `/instructor/courses/${course.id}` }, { label: quiz.title }]}
         eyebrow="Quiz analytics"
         title={quiz.title}
-        subtitle={<>{quiz.timeLimitMinutes} min · due {formatDateTime(quiz.deadline)} {quiz.shuffle && <Badge>Shuffled</Badge>}</>}
+        subtitle={
+          <>
+            {quiz.timeLimitMinutes} min · {quiz.opensAt ? `opens ${formatDateTime(quiz.opensAt)} · ` : ""}due {formatDateTime(quiz.deadline)}{" "}
+            {quiz.shuffle && <Badge>Shuffled</Badge>}{" "}
+            {multi && <Badge tone="accent">{quiz.maxAttempts} attempts · {GRADING_METHOD_LABEL[quiz.gradingMethod].toLowerCase()} counts</Badge>}
+          </>
+        }
         action={
           <>
             <Link href={`/instructor/quizzes/${quiz.id}/edit`} className={buttonClass("secondary")}><Pencil className="size-4" /> Edit</Link>
@@ -38,31 +49,49 @@ export default async function QuizAnalyticsPage({ params }: PageProps<"/instruct
 
       <div className="stagger mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatTile label="Submitted" value={`${submitted.length} / ${classSize}`} icon={<Users />} />
-        <StatTile label="Class average" value={formatPercent(avgPercent)} icon={<Target />} tone="success" />
+        <StatTile label="Class average" value={formatPercent(avgPercent)} icon={<Target />} tone="success" hint={multi ? GRADING_METHOD_LABEL[quiz.gradingMethod] : undefined} />
         <StatTile label="Avg. time taken" value={avgSeconds == null ? "–" : `${Math.floor(avgSeconds / 60)}m ${Math.round(avgSeconds % 60)}s`} icon={<Clock />} tone="neutral" />
-        <StatTile label="Questions" value={questionStats.length} icon={<CheckCircle2 />} tone="neutral" hint={hardest ? `Hardest: Q${hardest.position + 1}` : undefined} />
+        <StatTile label="Questions" value={questionCount} icon={<CheckCircle2 />} tone="neutral" hint={hardest ? `Hardest: ${shortPrompt(hardest.prompt)}` : undefined} />
       </div>
 
+      {slots.length > 0 && (
+        <p className="mb-6 flex items-start gap-2 rounded-xl bg-surface-2 p-3 text-sm text-muted">
+          <Shuffle className="mt-0.5 size-4 shrink-0" />
+          <span>
+            Random questions: {slots.map((s) => `${s.pickCount} from “${s.categoryName}” (${s.points} pt${s.points === 1 ? "" : "s"} each)`).join(", ")}. Each attempt draws
+            its own picks, so each pool question below was answered by fewer students.
+          </span>
+        </p>
+      )}
+
       <div className="grid gap-6 lg:grid-cols-2">
-        <Card title="Score distribution" description="Number of students in each score band.">
+        <Card title="Score distribution" description={multi ? "Number of students in each score band (the attempt that counts)." : "Number of students in each score band."}>
           {submitted.length ? <ScoreDistribution buckets={buckets} /> : <Empty>No submissions yet.</Empty>}
         </Card>
         <Card title="Results">
           {results.length === 0 ? (
             <Empty>No one has started this quiz yet.</Empty>
           ) : (
-            <Table head={["Student", "Score", "Time"]}>
+            <Table head={multi ? ["Student", "Score", "Attempts", "Time"] : ["Student", "Score", "Time"]}>
               {results.map((r) => (
-                <tr key={r.studentId}>
+                <tr key={r.studentId ?? r.name}>
                   <td className="px-2 py-2"><span className="font-mono text-xs text-muted">{r.studentId}</span> {r.name}</td>
-                  <td className="px-2 py-2 tabular-nums">{r.submittedAt ? `${r.score} / ${r.total}` : <Badge tone="accent">In progress</Badge>}</td>
+                  <td className="px-2 py-2 tabular-nums">
+                    {r.score != null ? `${r.score} / ${r.total}` : <Badge tone="accent">In progress</Badge>}
+                    {r.score != null && r.inProgress && <> <Badge tone="accent">Retaking</Badge></>}
+                  </td>
+                  {multi && (
+                    <td className="px-2 py-2 text-xs tabular-nums text-muted">
+                      {r.attempts.map((a) => (a.submittedAt ? a.score : "…")).join(" · ")}
+                    </td>
+                  )}
                   <td className="px-2 py-2 tabular-nums">{r.submittedAt ? formatDuration(r.submittedAt.getTime() - r.startedAt.getTime()) : "–"}</td>
                 </tr>
               ))}
             </Table>
           )}
         </Card>
-        <Card title="Question breakdown" className="lg:col-span-2" description="How many students picked each option. A popular wrong answer usually points to a specific misconception.">
+        <Card title="Question breakdown" className="lg:col-span-2" description="How students answered each question (all finished attempts). A popular wrong answer usually points to a specific misconception.">
           <ol className="grid gap-4 md:grid-cols-2">
             {questionStats.map((q, i) => {
               const rate = q.answered > 0 ? (q.correct / q.answered) * 100 : null;
@@ -70,26 +99,52 @@ export default async function QuizAnalyticsPage({ params }: PageProps<"/instruct
               return (
                 <li key={q.id} className="rounded-xl border border-border p-4 text-sm">
                   <div className="mb-3 flex items-start justify-between gap-3">
-                    <p className="font-medium">{i + 1}. {q.prompt}</p>
+                    <div>
+                      <p className="font-medium">{i + 1}. {q.prompt}</p>
+                      <p className="mt-1 flex flex-wrap gap-1">
+                        <Badge>{QUESTION_TYPE_LABEL[q.type]}</Badge>
+                        <Badge>{q.points} pt{q.points === 1 ? "" : "s"}</Badge>
+                        {q.pool && <Badge tone="accent">Random: {q.pool}</Badge>}
+                      </p>
+                    </div>
                     <Badge tone={rate == null ? "neutral" : rate >= 70 ? "success" : rate >= 40 ? "warning" : "danger"}>{formatPercent(rate)} correct</Badge>
                   </div>
-                  <ul className="space-y-1.5">
-                    {q.options.map((opt, k) => {
-                      const isCorrect = k === q.correctIndex;
-                      return (
-                        <li key={k} className="grid grid-cols-[minmax(0,1fr)_6rem_2rem] items-center gap-2">
-                          <span className={`flex items-center gap-1.5 truncate ${isCorrect ? "font-medium" : "text-muted"}`}>
-                            {isCorrect && <CheckCircle2 className="size-3.5 shrink-0 text-[var(--status-good)]" aria-label="Correct answer" />}
-                            {opt}
-                          </span>
-                          <span className="h-2 overflow-hidden rounded-full bg-surface-2">
-                            <span className="block h-full rounded-full" style={{ width: `${(q.optionCounts[k] / max) * 100}%`, background: isCorrect ? "var(--status-good)" : "var(--series-1)" }} />
-                          </span>
-                          <span className="text-right text-xs tabular-nums text-muted">{q.optionCounts[k]}</span>
-                        </li>
-                      );
-                    })}
-                  </ul>
+                  {q.options.length > 0 ? (
+                    <ul className="space-y-1.5">
+                      {q.options.map((opt, k) => {
+                        const isCorrect = q.type === "multiple" ? (q.correctIndexes ?? []).includes(k) : k === q.correctIndex;
+                        return (
+                          <li key={k} className="grid grid-cols-[minmax(0,1fr)_6rem_2rem] items-center gap-2">
+                            <span className={`flex items-center gap-1.5 truncate ${isCorrect ? "font-medium" : "text-muted"}`}>
+                              {isCorrect && <CheckCircle2 className="size-3.5 shrink-0 text-[var(--status-good)]" aria-label="Correct answer" />}
+                              {opt}
+                            </span>
+                            <span className="h-2 overflow-hidden rounded-full bg-surface-2">
+                              <span className="block h-full rounded-full" style={{ width: `${(q.optionCounts[k] / max) * 100}%`, background: isCorrect ? "var(--status-good)" : "var(--series-1)" }} />
+                            </span>
+                            <span className="text-right text-xs tabular-nums text-muted">{q.optionCounts[k]}</span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-muted">
+                        <CheckCircle2 className="mr-1 inline size-3.5 text-[var(--status-good)]" aria-hidden />
+                        Accepted:{" "}
+                        <span className="text-foreground">
+                          {q.type === "numerical" ? `${q.numericAnswer} ± ${q.tolerance ?? 0}` : (q.acceptedAnswers ?? []).join(" | ")}
+                        </span>
+                      </p>
+                      {q.topTyped.length > 0 && (
+                        <ul className="space-y-1">
+                          {q.topTyped.map(([value, n]) => (
+                            <li key={value} className="flex justify-between gap-3 rounded-lg bg-surface-2 px-2 py-1"><span className="truncate">{value}</span><span className="tabular-nums text-muted">{n}</span></li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
                 </li>
               );
             })}
@@ -98,6 +153,10 @@ export default async function QuizAnalyticsPage({ params }: PageProps<"/instruct
       </div>
     </>
   );
+}
+
+function shortPrompt(s: string) {
+  return s.length > 28 ? `${s.slice(0, 27)}…` : s;
 }
 
 function formatDuration(ms: number) {
