@@ -28,6 +28,7 @@ const at = (days: number, hour = 23, minute = 59) => {
   return d;
 };
 const room = () => `eduWave-${randomBytes(12).toString("base64url").replace(/[-_]/g, "x")}`;
+const none2 = { selectedIndex: null, selectedIndexes: null, textAnswer: null, numberAnswer: null };
 
 const STUDENTS = [
   ["Ananya Rao", "24CS1001"], ["Arjun Mehta", "24CS1002"], ["Diya Negi", "24CS1003"], ["Kabir Rawat", "24CS1004"],
@@ -217,7 +218,7 @@ async function main() {
       ])
       .returning();
     for (const [i, s] of students.entries()) {
-      const picks = q1qs.map((q, k) => ((i + k) % 5 === 0 ? (q.correctIndex + 1) % q.options.length : q.correctIndex));
+      const picks = q1qs.map((q, k) => ((i + k) % 5 === 0 ? (q.correctIndex! + 1) % q.options.length : q.correctIndex!));
       const score = picks.filter((p, k) => p === q1qs[k].correctIndex).length;
       const started = new Date(q1.deadline.getTime() - 3 * DAY);
       // Same order as a real attempt: start, answer, then finish (answers are frozen after that).
@@ -236,6 +237,93 @@ async function main() {
       { quizId: q2.id, position: 0, prompt: "A fair die is rolled. What is P(even)?", options: ["1/6", "1/3", "1/2", "2/3"], correctIndex: 2, explanation: "Three of six outcomes are even." },
       { quizId: q2.id, position: 1, prompt: "E[X] for X ~ Bernoulli(p) is…", options: ["p", "1 − p", "p(1 − p)", "1"], correctIndex: 0 },
       { quizId: q2.id, position: 2, prompt: "Var(aX) equals…", options: ["a·Var(X)", "a²·Var(X)", "Var(X)", "|a|·Var(X)"], correctIndex: 1, explanation: "Variance scales with the square of the constant." },
+    ]);
+
+    // Question bank for CS201: two categories and every question type (sample questions).
+    const [complexity, linear] = await tx
+      .insert(schema.questionCategories)
+      .values([{ courseId: ds.id, name: "Complexity" }, { courseId: ds.id, name: "Linear structures" }])
+      .returning();
+    const none = { correctIndex: null, correctIndexes: null, acceptedAnswers: null, numericAnswer: null, tolerance: null };
+    const bankRows = await tx
+      .insert(schema.bankQuestions)
+      .values([
+        { ...none, categoryId: complexity.id, type: "single" as const, prompt: "What is the worst-case time of linear search on n items?", options: ["O(1)", "O(log n)", "O(n)", "O(n log n)"], correctIndex: 2, tags: ["big-o", "searching"] },
+        { ...none, categoryId: complexity.id, type: "true_false" as const, prompt: "Merge sort runs in O(n log n) time in the worst case.", options: ["True", "False"], correctIndex: 0, tags: ["sorting"], explanation: "It always splits in half and merges in linear time." },
+        { ...none, categoryId: complexity.id, type: "multiple" as const, prompt: "Which of these comparison sorts are O(n log n) in the worst case?", options: ["Merge sort", "Heap sort", "Quick sort", "Insertion sort"], correctIndexes: [0, 1], tags: ["sorting", "big-o"], explanation: "Quick sort is O(n²) in the worst case; insertion sort is O(n²)." },
+        { ...none, categoryId: complexity.id, type: "numerical" as const, prompt: "What is log₂(1024)?", options: [], numericAnswer: 10, tolerance: 0, tags: ["big-o"] },
+        { ...none, categoryId: linear.id, type: "short_answer" as const, prompt: "Which data structure follows last-in, first-out (LIFO) order?", options: [], acceptedAnswers: ["stack", "a stack"], tags: ["stacks"] },
+        { ...none, categoryId: linear.id, type: "single" as const, prompt: "Which structure gives O(1) access to the i-th element?", options: ["Array", "Singly linked list", "Stack", "Queue"], correctIndex: 0, tags: ["arrays"] },
+        { ...none, categoryId: linear.id, type: "true_false" as const, prompt: "A queue removes elements in first-in, first-out (FIFO) order.", options: ["True", "False"], correctIndex: 0, tags: ["queues"] },
+        { ...none, categoryId: linear.id, type: "multiple" as const, prompt: "Which operations take O(1) time on a singly linked list that only has a head pointer?", options: ["Insert at the head", "Delete the head", "Access the last element", "Search for a value"], correctIndexes: [0, 1], tags: ["linked lists"] },
+        { ...none, categoryId: linear.id, type: "numerical" as const, prompt: "A hash table holds 75 entries in 100 buckets. What is its load factor?", options: [], numericAnswer: 0.75, tolerance: 0.01, tags: ["hashing"], explanation: "Load factor = entries / buckets." },
+      ].map((b) => ({ ...b, courseId: ds.id, createdBy: meera.id })))
+      .returning();
+
+    // A practice quiz using the bank: one fixed question (a copy) + 2 random picks from
+    // "Linear structures" worth 2 points each; 2 attempts allowed, the highest counts.
+    const copyOf = (b: (typeof bankRows)[number]) => ({
+      type: b.type, prompt: b.prompt, options: b.options, correctIndex: b.correctIndex, correctIndexes: b.correctIndexes,
+      acceptedAnswers: b.acceptedAnswers, numericAnswer: b.numericAnswer, tolerance: b.tolerance, explanation: b.explanation, bankQuestionId: b.id,
+    });
+    const [q3] = await tx
+      .insert(schema.quizzes)
+      .values({ courseId: ds.id, sectionId: sec[ds.id][2].id, title: "Quiz 3: Practice (random questions)", description: "Practice quiz: two attempts, your best one counts.", timeLimitMinutes: 15, opensAt: new Date(now - 2 * DAY), deadline: at(6), maxAttempts: 2, gradingMethod: "highest" })
+      .returning();
+    const [fixed] = await tx.insert(schema.questions).values({ ...copyOf(bankRows[1]), quizId: q3.id, position: 0, points: 1 }).returning();
+    const [slot] = await tx
+      .insert(schema.quizSlots)
+      .values({ quizId: q3.id, position: 1, categoryId: linear.id, categoryName: linear.name, pickCount: 2, points: 2 })
+      .returning();
+    const pool = await tx
+      .insert(schema.questions)
+      .values(bankRows.filter((b) => b.categoryId === linear.id).map((b) => ({ ...copyOf(b), quizId: q3.id, position: 1, slotId: slot.id, points: 2 })))
+      .returning();
+    // Two students have practised: Ananya twice (1 then 5 of 5), Arjun once.
+    const correctResponse = (q: (typeof pool)[number]) => ({
+      selectedIndex: q.type === "single" || q.type === "true_false" ? q.correctIndex : null,
+      selectedIndexes: q.type === "multiple" ? q.correctIndexes : null,
+      textAnswer: q.type === "short_answer" ? q.acceptedAnswers![0] : null,
+      numberAnswer: q.type === "numerical" ? q.numericAnswer : null,
+    });
+    const practice = [
+      { student: students[0], n: 1, picks: [pool[0], pool[1]], right: [true, false, false] },
+      { student: students[0], n: 2, picks: [pool[2], pool[3]], right: [true, true, true] },
+      { student: students[1], n: 1, picks: [pool[1], pool[4]], right: [true, true, false] },
+    ];
+    for (const [k, p] of practice.entries()) {
+      const given = [fixed, ...p.picks];
+      const startedAt = new Date(now - (30 - k) * 3_600_000);
+      const [att] = await tx
+        .insert(schema.attempts)
+        .values({
+          quizId: q3.id,
+          studentId: p.student.id,
+          attemptNumber: p.n,
+          startedAt,
+          total: given.reduce((s, q) => s + q.points, 0),
+          layout: { questionOrder: given.map((q) => q.id), optionOrders: Object.fromEntries(given.map((q) => [q.id, q.options.map((_, i) => i)])) },
+        })
+        .returning();
+      // A wrong answer: for choice questions the first option that isn't correct; else a wrong value.
+      const wrongResponse = (q: (typeof pool)[number]) =>
+        q.type === "short_answer" ? { ...none2, textAnswer: "queue" }
+        : q.type === "numerical" ? { ...none2, numberAnswer: (q.numericAnswer ?? 0) + 1 }
+        : q.type === "multiple" ? { ...none2, selectedIndexes: [3] }
+        : { ...none2, selectedIndex: q.correctIndex === 0 ? 1 : 0 };
+      await tx.insert(schema.answers).values(given.map((q, j) => ({ attemptId: att.id, quizId: q3.id, questionId: q.id, ...(p.right[j] ? correctResponse(q) : wrongResponse(q)) })));
+      const score = given.reduce((s, q, j) => s + (p.right[j] ? q.points : 0), 0);
+      await tx.update(schema.attempts).set({ submittedAt: new Date(startedAt.getTime() + 9 * 60_000), score }).where(eq(schema.attempts.id, att.id));
+    }
+
+    // A quiz that opens later (students see when it opens).
+    const [q4] = await tx
+      .insert(schema.quizzes)
+      .values({ courseId: ds.id, sectionId: sec[ds.id][3].id, title: "Quiz 4: Stacks and queues", timeLimitMinutes: 10, opensAt: at(2, 9, 0), deadline: at(9) })
+      .returning();
+    await tx.insert(schema.questions).values([
+      { ...copyOf(bankRows[4]), quizId: q4.id, position: 0 },
+      { ...copyOf(bankRows[6]), quizId: q4.id, position: 1 },
     ]);
 
     // Live classes.
@@ -271,7 +359,7 @@ async function main() {
     );
   });
 
-  console.log("Seeded: 1 admin, 3 instructors + 1 teaching assistant, 12 students in sections A/B, 4 courses with sections, materials, assignments, quizzes, live classes and discussions.");
+  console.log("Seeded: 1 admin, 3 instructors + 1 teaching assistant, 12 students in sections A/B, 4 courses with sections, materials, assignments, quizzes (CS201: question bank, a random-question quiz with 2 attempts, a quiz that opens later), live classes and discussions.");
 }
 
 main()
