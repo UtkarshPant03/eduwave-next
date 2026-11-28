@@ -84,6 +84,12 @@ for (const theme of ["light", "dark"]) {
   await scan(ins, course, theme, "Attendance");
   const sheet = await ins.locator('a[href*="/attendance/"]:not([href$="/export"])').first().getAttribute("href");
   await scan(ins, sheet, theme);
+  // Question bank (4.4): own bank, a department colleague's bank, a filtered view, and the
+  // analytics of the seeded random-slot quiz with two attempts.
+  const otherCourse = await (async () => { await ins.goto(`${BASE}/instructor/courses`); return hrefOf(ins, "/instructor/courses/", "Database"); })();
+  await ins.goto(BASE + course);
+  const quiz3 = await hrefOf(ins, "/instructor/quizzes/", "Quiz 3");
+  for (const p of [`${course}/bank`, `${course}/bank?type=multiple`, `${course}/bank/shared/${otherCourse.split("/").pop()}`, quiz3, `${quiz3}/edit`]) await scan(ins, p, theme);
   await ins.context().close();
 
   const stu = await (await context(theme)).newPage();
@@ -98,6 +104,11 @@ for (const theme of ["light", "dark"]) {
     "/student/calendar", "/student/boards", "/student/account",
   ]) await scan(stu, p, theme);
   await scan(stu, sCourse, theme, "Attendance");
+  // 4.4: a quiz with two finished attempts (attempts table, counted value) and one that opens later.
+  await stu.goto(BASE + sCourse);
+  const sQuiz3 = await hrefOf(stu, "/student/quizzes/", "Quiz 3");
+  const sQuiz4 = await hrefOf(stu, "/student/quizzes/", "Quiz 4");
+  for (const p of [sQuiz3, `${sQuiz3}?attempt=1`, sQuiz4]) await scan(stu, p, theme);
   await stu.context().close();
 }
 await browser.close();
