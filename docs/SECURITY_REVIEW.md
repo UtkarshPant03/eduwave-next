@@ -26,7 +26,7 @@ This reviews eduWave against the security requirements for a Graphic Era deploym
 | Uploads / downloads | Validated and authorised | sec (fake OOXML, inline student PDFs, other students' files) |
 | Rate limiting | Login, enrolment keys, posts, AI, password change | — |
 | Sensitive data exposure | Errors carry only a digest; no secrets in the bundle | — |
-| Logging / audit | Append-only audit log with actor and trusted IP; grade history; attendance history (4.3) | **Gap:** quiz score changes need history when overrides are added |
+| Logging / audit | Append-only audit log with actor and trusted IP; grade history; attendance history (4.3); gradebook override history (4.6, trigger-written, append-only) plus `grade_overridden` and `gradebook_changed` audit events | Closed in 4.6 (built, in QA): quiz and assignment overrides have history. Changing a quiz's grading method still changes the counted value without history |
 | Dependencies | `npm audit --omit=dev`: 0; CI enforces it | — |
 | Backup security | Backups contain personal data; documented as private and off-site | Encryption at rest is the operator's responsibility (document per D5) |
 
@@ -35,7 +35,9 @@ This reviews eduWave against the security requirements for a Graphic Era deploym
 | Data | Who changed / what / when / previous / new | Approval | Status |
 |---|---|---|---|
 | Assignment grades | `grade_events` (grader, old, new, time) + `submissions.graded_by` | None | **Covered** |
-| Quiz scores | Computed once by the server per attempt; no override path, so nothing to track. With several attempts, the counted value is derived (grading method), never stored; changing the method after attempts exist changes the counted value without history | — | Covered (when overrides arrive, history is required) |
+| Quiz scores | Computed once by the server per attempt and never edited. 4.6: the value that counts can be overridden in the gradebook (`grade_overrides`); every override and removal is written by a trigger to `grade_override_events` (who, old, new, reason, when; append-only). With several attempts, the counted value is derived (grading method), never stored; changing the method after attempts exist changes the counted value without history | Item overrides: `grade.edit`; course totals: `course.manage`; reason mandatory | **Covered** (4.6, in QA) |
+| Gradebook settings (method, categories, weights, scale, release) | `gradebook_changed` audit events (who, when, summary); no per-field history | `course.manage` | Partly covered (audit summary only) |
+| Unreleased grades | Grade, feedback, feedback files, quiz scores, answer key and marks are removed on the server for students (pages, file downloads, notifications) | `course.manage` releases | Built (4.6), needs QA (page source / RSC payload checks) |
 | Attendance | `attendance_events`, written by a database trigger on every mark and change (who, old, new, reason); append-only | Correction request → approval by `attendance.approve` (instructor or coordinator, not TA) | **Covered** (4.3) |
 | Enrolment | Audit events (`enrolment_added/removed`) | — | Covered |
 | User accounts | Audit events with actor | — | Covered |

@@ -1,5 +1,39 @@
 # Changelog
 
+## 4.6.0: Phase 3, gradebook: categories and weights, scale as data, overrides, release (2026-11-28, built, in QA)
+
+Grading policy (decision D4) is still open, so nothing here assumes Graphic Era's scheme: every course keeps exactly the old gradebook until its staff change it.
+
+**Database (migration `0007_gradebook`, additive)**
+- `courses.grade_total_method` (`points` default = the old calculation, or `weighted`). New tables `grade_categories` (name, weight 0–100), `grade_bands` (the course's scale: letter, label, minimum %, grade points), `grade_overrides` and `grade_override_events`. `assignments` and `quizzes` get `grade_category_id` (composite FK keeps it in the same course) and `grades_released` (default true).
+- **Back-fill:** every existing course gets today's 10-point scale as data; new courses get it from a trigger. Existing courses stay in points mode with every item released, so every number, letter and GPA is unchanged.
+- **Rules in the database:** override target is at most one item and can't change; values in range (item points ≥ 0 and ≤ the assignment's maximum, course percent 0–100, course letter must be a band of the course's scale); non-empty reason; the student is enrolled; every override and removal is written to `grade_override_events` by a trigger, which is append-only. An assignment's maximum can't drop below an override (extends the existing trigger). Plan and rollback: `DATABASE.md`.
+
+**Staff**
+- **Gradebook setup** page (`course.manage`): choose the total method; create, rename, re-weight and remove categories in one save (weights must total 100 in weighted mode, checked on the server); give each assignment and quiz a category and choose whether its grades are released; edit the grade scale (minimums strictly descending, a band at 0, unique letters, points ≥ 0; "Use the default 10-point scale" resets it). Placeholders only ("e.g. Internal assessment"), no pre-filled category names.
+- **Weighted total** = Σ(weight × category %) over categories with counted items, re-normalised over those categories' weights. **Uncategorised items are refused in weighted mode**: switching is refused until every item has a category, and new or edited items in a weighted course must name one (the builders show a "Gradebook category" select when the course has categories).
+- **Overrides** page: staff with `grade.edit` (TAs included) override one item's points for one student; staff with `course.manage` override a course total (percentage, letter or both). A reason is mandatory, including to remove one. Active overrides and the full history (who, old, new, reason, when) are listed. Submissions, attempts and their scores are never changed.
+- Gradebook table and CSV show each item's category and release state, per-category percentages, the weighted total when used, the letter from the course's scale, and override markers (CSV: an "Overridden" column).
+- Releasing an item's grades notifies the class. Grading an unreleased assignment doesn't notify the student.
+
+**Students**
+- Unreleased items show **"Not released"**; they don't count in the total, the category breakdown or the GPA the student sees. Their grade, feedback, feedback files, quiz scores, answer key and per-question marks are removed on the server (page payload, feedback file downloads, notifications).
+- The course Grades tab shows each item's category, a "By category" breakdown (released items only), the course's own scale, and a note when a value or the course total was set by the instructor (reasons are staff-only).
+- The Grades page uses each course's scale for the letter and grade points (identical for courses on the default scale).
+
+**Seed**
+- CS201 uses weighted categories **"Labs (sample)" 60% and "Quizzes (sample)" 40%** (sample data, not a policy); Lab 4's grades are not released; Diya Negi's (24CS1003) Quiz 1 is overridden to 5/5 with a sample reason.
+
+**Limitations**
+- Not yet verified as an upgrade of a seeded 0006 database, nor on PostgreSQL (QA).
+- The "before/after" proof is a unit-level equivalence test of the calculation (old code copied as reference, 2,000 random gradebooks); comparing real seeded gradebooks before and after the migration is left to QA.
+- A course total override is shown to the student (as their total) even if some items are unreleased. Status leak: a student whose unreleased assignment was graded sees that the submission can no longer be changed.
+- Releasing grades and changing categories need `course.manage` (TAs can't). Overrides don't notify the student.
+- Weights are re-normalised over categories with counted work; there is no option to treat empty categories as 0.
+
+**Tests**
+- New `tests/unit/gradebook.test.ts` (15 checks: default path equals the pre-4.6 calculation, weighted totals and re-normalisation, scales as data and their validation, course overrides). `test:unit` goes to 68. No new browser suite (QA to follow).
+
 ## 4.5.0: Phase 3, assignments: several files, versions, feedback files, bulk download (2026-11-28, built, in QA)
 
 **Database (migration `0006_assignment_versions`, additive)**

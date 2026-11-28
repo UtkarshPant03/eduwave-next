@@ -92,11 +92,14 @@ Roles: **A** admin · **I** instructor · **S** student. "Tests" names the suite
 
 | Feature | Roles | Code | Data | Tests | Status | Issues / action |
 |---|---|---|---|---|---|---|
-| Course gradebook (students × items), totals, 10-point letter scale | I, S | `lib/data/gradebook.ts` | — | e2e | **Verified** | Points summed: no categories, weights or aggregation choice. Scale is in code |
-| Student grades page with GPA | S | `/student/grades` | — | e2e | **Verified** | "GPA" is provisional. Credit-weighted? Policy to confirm (D4) |
-| CSV export with formula escaping | I | export route | — | e2e, sec | **Verified** | — |
-| Grade history (assignments) | I | grade_events | — | db | **Verified** | Quiz scores have no override path, so no history needed yet |
-| Overrides, hidden grades, release policies | — | — | — | — | **Missing** | Phase 3 |
+| Course gradebook (students × items), totals, letter scale | I, S | `lib/data/gradebook.ts`, `lib/grading.ts` | courses.grade_total_method, grade_bands | e2e, unit | **Verified** (points mode); 4.6 changes **built, in QA** | 4.6: total method per course (points default, or weighted categories); scale stored per course (default 10-point, back-filled; new courses by trigger) |
+| Weighted categories | I | setup page, `saveGradebookSetup`, `saveGradeItems` | grade_categories, assignments/quizzes.grade_category_id | unit | **Built, in QA** (4.6) | Weights total 100 (server); re-normalised over categories with counted items; uncategorised items refused in weighted mode. Not verified as a 0006 upgrade or on PostgreSQL |
+| Grade scale editor | I | `saveGradeScale`, `GradeScaleEditor` | grade_bands | unit (validation) | **Built, in QA** (4.6) | Server checks minimums strictly descending, band at 0, unique letters, points ≥ 0; a letter used by a course override can't be removed (FK) |
+| Student grades page with GPA | S | `/student/grades` | — | e2e | **Verified** | "GPA" is provisional, grade points from each course's scale (4.6). Credit-weighted? Policy to confirm (D4) |
+| CSV export with formula escaping | I | export route | — | e2e, sec | **Verified** | 4.6 adds category, release, category %, weighted total and "Overridden" columns (built, in QA) |
+| Grade history (assignments) | I | grade_events | — | db | **Verified** | — |
+| Overrides with history | I | `/gradebook/overrides`, `setItemOverride`, `setCourseOverride`, `removeOverride` | grade_overrides, grade_override_events (trigger, append-only) | — | **Built, in QA** (4.6) | Item: `grade.edit`; course total/letter: `course.manage`; reason mandatory (also for removal). No browser or db test yet. Overrides don't notify students |
+| Hidden grades and release | I, S | setup page, `gradebook(…, audience)`, `getAssignmentForStudent`, `getStudentQuiz`, `getFileForUser` | assignments/quizzes.grades_released | — | **Built, in QA** (4.6) | Per item, default released. Release needs `course.manage`. A graded-but-unreleased submission shows the student it can't be changed (status only). No browser test yet |
 
 ## Attendance
 

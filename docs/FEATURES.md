@@ -169,11 +169,12 @@ Your differentiator might be one well-chosen Advanced feature done properly, not
 |---|---|---|---|---|
 | GRD-01 | Gradebook (students × items) | Core | ✅ | Graded, awaiting-grade, missing and upcoming states visible. |
 | GRD-02 | Clear totals policy | Standard | ✅ | Missing work counts 0 **after** the deadline; ungraded submissions don't count yet. Policy explained in the UI. |
-| GRD-03 | Letter grades / 10-point scale | Standard | ✅ | Scale defined in one place and shown to students. |
-| GRD-04 | Student grade view & running GPA | Standard | ✅ | Credit-weighted, labelled **provisional**. |
-| GRD-05 | Gradebook CSV export | Standard | ✅ | Spreadsheet formula injection neutralised. |
-| GRD-06 | Weighted categories (e.g. labs 40%, quizzes 20%) | Advanced | ⬜ | |
-| GRD-07 | Grade overrides with audit trail | Advanced | ⬜ | |
+| GRD-03 | Letter grades / 10-point scale | Standard | ✅ (scale as data: 🟡 built, in QA 4.6) | Each course stores its scale (letter, label, minimum %, grade points); default = the 10-point scale. Staff with `course.manage` edit it; the server checks minimums strictly descending, a band at 0, unique letters, points ≥ 0. Shown to students per course. |
+| GRD-04 | Student grade view & running GPA | Standard | ✅ | Credit-weighted, labelled **provisional**; grade points from each course's scale (4.6). |
+| GRD-05 | Gradebook CSV export | Standard | ✅ | Spreadsheet formula injection neutralised. 4.6: categories, release state, category %, weighted total, letter per course scale, "Overridden" column. |
+| GRD-06 | Weighted categories (e.g. labs 40%, quizzes 20%) | Advanced | 🟡 built, in QA (4.6) | Course chooses points (default, the old calculation) or weighted categories; weights total 100 (server). Weighted total re-normalised over categories with counted items. Uncategorised items refused in weighted mode. No category names pre-filled (D4 open). |
+| GRD-07 | Grade overrides with audit trail | Advanced | 🟡 built, in QA (4.6) | Item overrides (`grade.edit`) and course total/letter overrides (`course.manage`) with a mandatory reason; append-only history by trigger; marked in gradebook and CSV; student work unchanged. |
+| GRD-08 | Hidden grades and release | Advanced | 🟡 built, in QA (4.6) | Per item "grades released" (default released). Unreleased: "Not released" to students, excluded from their total; grade, feedback, files, quiz score and answers never sent to the student. Releasing notifies the class. |
 
 ### 3.7 Communication (`COM`)
 
