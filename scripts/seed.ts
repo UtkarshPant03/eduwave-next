@@ -28,6 +28,32 @@ const at = (days: number, hour = 23, minute = 59) => {
   return d;
 };
 const room = () => `eduWave-${randomBytes(12).toString("base64url").replace(/[-_]/g, "x")}`;
+const sized = (data: Buffer) => ({ data, size: data.length });
+
+/** A minimal one-page PDF showing one line of text (sample data only). */
+function tinyPdf(line: string) {
+  const NL = "\n";
+  const text = line.replace(/[()\\]/g, "");
+  const stream = `BT /F1 14 Tf 72 720 Td (${text}) Tj ET`;
+  const objs = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+    `<< /Length ${stream.length} >>${NL}stream${NL}${stream}${NL}endstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ];
+  let pdf = `%PDF-1.4${NL}`;
+  const offsets: number[] = [];
+  objs.forEach((o, i) => {
+    offsets.push(pdf.length);
+    pdf += `${i + 1} 0 obj${NL}${o}${NL}endobj${NL}`;
+  });
+  const xref = pdf.length;
+  pdf += `xref${NL}0 ${objs.length + 1}${NL}0000000000 65535 f ${NL}`;
+  pdf += offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n ${NL}`).join("");
+  pdf += `trailer${NL}<< /Size ${objs.length + 1} /Root 1 0 R >>${NL}startxref${NL}${xref}${NL}%%EOF${NL}`;
+  return Buffer.from(pdf, "latin1");
+}
 const none2 = { selectedIndex: null, selectedIndexes: null, textAnswer: null, numberAnswer: null };
 
 const STUDENTS = [
@@ -178,27 +204,76 @@ async function main() {
     const [a1, a2, a3, a4] = await tx
       .insert(schema.assignments)
       .values([
-        { courseId: ds.id, sectionId: sec[ds.id][1].id, title: "Lab 2: Singly linked list", instructions: "### Objective\nImplement a singly linked list in C++ with `insert`, `remove` and `reverse`.\n\n### Deliverables\n- Source code (.zip or .cpp)\n- A short note on the time complexity of each operation", dueAt: at(-10), maxPoints: 20, lateDays: 2 },
+        { courseId: ds.id, sectionId: sec[ds.id][1].id, title: "Lab 2: Singly linked list", instructions: "### Objective\nImplement a singly linked list in C++ with `insert`, `remove` and `reverse`.\n\n### Deliverables\n- Source code (.zip or .cpp)\n- A short note on the time complexity of each operation", dueAt: at(-10), maxPoints: 20, lateDays: 2, maxFiles: 3 },
         { courseId: ds.id, sectionId: sec[ds.id][3].id, title: "Lab 4: Binary search trees", instructions: "### Objective\nImplement BST insert, search and in-order traversal.\n\n**Bonus:** implement deletion with all three cases.", dueAt: at(-1), maxPoints: 20, lateDays: 3 },
         { courseId: ds.id, sectionId: sec[ds.id][4].id, title: "Lab 5: Hash table with chaining", instructions: "Implement a hash table with separate chaining and report the load factor after 10,000 random inserts.", dueAt: at(5), maxPoints: 25, lateDays: 2 },
         { courseId: dbms.id, sectionId: sec[dbms.id][2].id, title: "SQL worksheet 3: joins", instructions: "Answer the 10 join questions in the attached worksheet. Submit your SQL queries as text.", dueAt: at(3), maxPoints: 30, lateDays: 1 },
       ])
       .returning();
     const lab2Grades = [18, 20, 15, 12, 17, 19, 16, 14, 20, 11, 17, 13];
-    await tx.insert(schema.submissions).values(
-      students.map((s, i) => ({
-        assignmentId: a1.id,
-        studentId: s.id,
-        text: "Implementation attached. insert O(1) at head, remove O(n), reverse O(n).",
-        submittedAt: new Date(a1.dueAt.getTime() - (i % 4) * 3_600_000 + (i === 9 ? DAY : 0)),
-        grade: lab2Grades[i],
-        feedback: lab2Grades[i] >= 17 ? "Clean code and correct complexity analysis. Well done." : "Works, but reverse() leaks the old head pointer. Review pointer updates.",
-        gradedAt: new Date(now - 6 * DAY),
-      })),
-    );
-    await tx.insert(schema.submissions).values(
-      students.slice(1, 8).map((s, i) => ({ assignmentId: a2.id, studentId: s.id, text: "BST implementation with recursive insert and in-order traversal. Bonus deletion included.", submittedAt: new Date(a2.dueAt.getTime() - (i + 1) * 3_600_000) })),
-    );
+    // Lab 2 accepts up to 3 files (4.5). Submissions are written ungraded first: a graded
+    // submission accepts no new version (database rule), so versions come before grades.
+    const lab2Text = "Implementation attached. insert O(1) at head, remove O(n), reverse O(n).";
+    const lab2 = await tx
+      .insert(schema.submissions)
+      .values(
+        students.map((s, i) => ({
+          assignmentId: a1.id,
+          studentId: s.id,
+          text: lab2Text,
+          submittedAt: new Date(a1.dueAt.getTime() - (i % 4) * 3_600_000 + (i === 9 ? DAY : 0)),
+        })),
+      )
+      .returning();
+    const lab4 = await tx
+      .insert(schema.submissions)
+      .values(students.slice(1, 8).map((s, i) => ({ assignmentId: a2.id, studentId: s.id, text: "BST implementation with recursive insert and in-order traversal. Bonus deletion included.", submittedAt: new Date(a2.dueAt.getTime() - (i + 1) * 3_600_000) })))
+      .returning();
+    // Every submission is version 1 ...
+    const v1s = await tx
+      .insert(schema.submissionVersions)
+      .values([...lab2, ...lab4].map((x) => ({ submissionId: x.id, versionNumber: 1, text: x.text, submittedAt: x.submittedAt })))
+      .returning();
+    // ... except Ananya's Lab 2, which she resubmitted: version 1 was a draft with one file,
+    // version 2 (the graded one) keeps the code and adds a PDF note.
+    const ananya = lab2[0];
+    const v1 = v1s.find((v) => v.submissionId === ananya.id)!;
+    const [code, note] = await tx
+      .insert(schema.files)
+      .values([
+        { courseId: ds.id, uploaderId: students[0].id, name: "linked_list.txt", mimeType: "text/plain", ...sized(Buffer.from(["// Singly linked list (C++), submitted as text", "struct Node { int value; Node* next; };", "// insert, remove and reverse follow.", ""].join("\n"))) },
+        { courseId: ds.id, uploaderId: students[0].id, name: "complexity-note.pdf", mimeType: "application/pdf", ...sized(tinyPdf("Lab 2: complexity of insert, remove and reverse")) },
+      ])
+      .returning({ id: schema.files.id });
+    await tx.insert(schema.submissionFiles).values({ versionId: v1.id, fileId: code.id, position: 0 });
+    const v2At = new Date(ananya.submittedAt.getTime() + 3_600_000);
+    const [v2] = await tx
+      .insert(schema.submissionVersions)
+      .values({ submissionId: ananya.id, versionNumber: 2, text: `${lab2Text} Added a note on complexity.`, submittedAt: v2At })
+      .returning();
+    await tx.insert(schema.submissionFiles).values([
+      { versionId: v2.id, fileId: code.id, position: 0 },
+      { versionId: v2.id, fileId: note.id, position: 1 },
+    ]);
+    await tx.update(schema.submissions).set({ text: v2.text, fileId: code.id, submittedAt: v2At }).where(eq(schema.submissions.id, ananya.id));
+    // Now grade Lab 2.
+    for (const [i, x] of lab2.entries()) {
+      await tx
+        .update(schema.submissions)
+        .set({
+          grade: lab2Grades[i],
+          feedback: lab2Grades[i] >= 17 ? "Clean code and correct complexity analysis. Well done." : "Works, but reverse() leaks the old head pointer. Review pointer updates.",
+          gradedAt: new Date(now - 6 * DAY),
+          gradedBy: meera.id,
+        })
+        .where(eq(schema.submissions.id, x.id));
+    }
+    // A feedback file on Ananya's graded Lab 2 (only she and course staff can download it).
+    const [fb] = await tx
+      .insert(schema.files)
+      .values({ courseId: ds.id, uploaderId: meera.id, name: "lab2-feedback.pdf", mimeType: "application/pdf", ...sized(tinyPdf("Lab 2 feedback: good use of a sentinel node.")) })
+      .returning({ id: schema.files.id });
+    await tx.insert(schema.feedbackFiles).values({ submissionId: ananya.id, fileId: fb.id, uploadedBy: meera.id });
     // a3 (upcoming, CS201) and a4 (upcoming, CS204) have no submissions yet.
     void [a3, a4];
 
@@ -359,7 +434,7 @@ async function main() {
     );
   });
 
-  console.log("Seeded: 1 admin, 3 instructors + 1 teaching assistant, 12 students in sections A/B, 4 courses with sections, materials, assignments, quizzes (CS201: question bank, a random-question quiz with 2 attempts, a quiz that opens later), live classes and discussions.");
+  console.log("Seeded: 1 admin, 3 instructors + 1 teaching assistant, 12 students in sections A/B, 4 courses with sections, materials, assignments, quizzes (CS201: question bank, a random-question quiz with 2 attempts, a quiz that opens later; Lab 2 takes 3 files, with a resubmitted version and a feedback file), live classes and discussions.");
 }
 
 main()
