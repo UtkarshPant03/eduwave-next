@@ -6,6 +6,14 @@
 import "server-only";
 
 export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024; // keep in sync with serverActions.bodySizeLimit
+/**
+ * All files sent in ONE request (a submission or a set of feedback files) share this budget,
+ * because the whole request must fit in serverActions.bodySizeLimit (9 MB in next.config.ts,
+ * the rest is room for the text and multipart overhead).
+ */
+export const MAX_REQUEST_UPLOAD_BYTES = MAX_UPLOAD_BYTES;
+/** Upper bound of the per-assignment "maximum files" setting (also a CHECK in the database). */
+export const MAX_FILES_LIMIT = 20;
 
 type Rule = {
   ext: string[];
@@ -76,4 +84,22 @@ export async function checkUpload(file: File): Promise<CheckedFile | { error: st
   // Keep only safe characters in the stored name (it ends up in a download header).
   const safeName = file.name.replace(/[^\w.\- ]+/g, "_").slice(0, 120) || `file.${ext}`;
   return { name: safeName, mimeType, data };
+}
+
+/**
+ * Several files from one request: each passes checkUpload, at most `max` of them, and
+ * together they stay within MAX_REQUEST_UPLOAD_BYTES. Empty file inputs are ignored.
+ */
+export async function checkUploads(entries: FormDataEntryValue[], max: number): Promise<CheckedFile[] | { error: string }> {
+  const list = entries.filter((f): f is File => f instanceof File && f.size > 0);
+  if (list.length > max) return { error: `You can attach at most ${max} file${max === 1 ? "" : "s"}.` };
+  const total = list.reduce((s, f) => s + f.size, 0);
+  if (list.length > 1 && total > MAX_REQUEST_UPLOAD_BYTES) return { error: "Files sent together must be 8 MB or smaller in total." };
+  const out: CheckedFile[] = [];
+  for (const f of list) {
+    const r = await checkUpload(f);
+    if ("error" in r) return { error: list.length > 1 ? `${f.name.slice(0, 80)}: ${r.error}` : r.error };
+    out.push(r);
+  }
+  return out;
 }

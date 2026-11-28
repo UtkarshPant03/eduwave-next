@@ -4,7 +4,7 @@
  */
 import "server-only";
 import { notFound } from "next/navigation";
-import { and, asc, count, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, count, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { CurrentUser } from "@/lib/auth/dal";
 import { courseForInstructor, courseForStudent } from "@/lib/access";
@@ -213,19 +213,72 @@ export async function getQuizAnalytics(user: CurrentUser, quizId: string) {
 
 /* ============================= assignments ============================= */
 
+export type SubmissionFile = { id: string; name: string; size: number; mimeType: string };
+export type SubmissionVersion = { id: string | null; versionNumber: number; text: string | null; submittedAt: Date; files: SubmissionFile[] };
+type SubmissionRow = { id: string; text: string | null; fileId: string | null; submittedAt: Date };
+
+/**
+ * Every version of each submission (oldest first) with its files. A submission written
+ * before versions existed and not back-filled shows as one version built from the row.
+ */
+async function versionsOf(subs: SubmissionRow[]) {
+  const out = new Map<string, SubmissionVersion[]>();
+  if (subs.length === 0) return out;
+  const ids = subs.map((s) => s.id);
+  const [versions, fileRows] = await Promise.all([
+    db
+      .select({ id: schema.submissionVersions.id, submissionId: schema.submissionVersions.submissionId, versionNumber: schema.submissionVersions.versionNumber, text: schema.submissionVersions.text, submittedAt: schema.submissionVersions.submittedAt })
+      .from(schema.submissionVersions)
+      .where(inArray(schema.submissionVersions.submissionId, ids))
+      .orderBy(asc(schema.submissionVersions.versionNumber)),
+    db
+      .select({ versionId: schema.submissionFiles.versionId, id: files.id, name: files.name, size: files.size, mimeType: files.mimeType })
+      .from(schema.submissionFiles)
+      .innerJoin(schema.submissionVersions, eq(schema.submissionVersions.id, schema.submissionFiles.versionId))
+      .innerJoin(files, eq(files.id, schema.submissionFiles.fileId))
+      .where(inArray(schema.submissionVersions.submissionId, ids))
+      .orderBy(asc(schema.submissionFiles.position)),
+  ]);
+  const filesBy = new Map<string, SubmissionFile[]>();
+  for (const { versionId, ...f } of fileRows) filesBy.set(versionId, [...(filesBy.get(versionId) ?? []), f]);
+  for (const v of versions) out.set(v.submissionId, [...(out.get(v.submissionId) ?? []), { id: v.id, versionNumber: v.versionNumber, text: v.text, submittedAt: v.submittedAt, files: filesBy.get(v.id) ?? [] }]);
+
+  const legacy = subs.filter((s) => !out.has(s.id));
+  if (legacy.length) {
+    const legacyFiles = legacy.some((s) => s.fileId)
+      ? await db.select({ id: files.id, name: files.name, size: files.size, mimeType: files.mimeType }).from(files).where(inArray(files.id, legacy.flatMap((s) => (s.fileId ? [s.fileId] : []))))
+      : [];
+    for (const s of legacy) out.set(s.id, [{ id: null, versionNumber: 1, text: s.text, submittedAt: s.submittedAt, files: legacyFiles.filter((f) => f.id === s.fileId) }]);
+  }
+  return out;
+}
+
+/** Feedback files per submission (newest last). */
+async function feedbackFilesOf(submissionIds: string[]) {
+  const out = new Map<string, (SubmissionFile & { feedbackFileId: string; createdAt: Date })[]>();
+  if (submissionIds.length === 0) return out;
+  const rows = await db
+    .select({ feedbackFileId: schema.feedbackFiles.id, submissionId: schema.feedbackFiles.submissionId, createdAt: schema.feedbackFiles.createdAt, id: files.id, name: files.name, size: files.size, mimeType: files.mimeType })
+    .from(schema.feedbackFiles)
+    .innerJoin(files, eq(files.id, schema.feedbackFiles.fileId))
+    .where(inArray(schema.feedbackFiles.submissionId, submissionIds))
+    .orderBy(asc(schema.feedbackFiles.createdAt));
+  for (const { submissionId, ...f } of rows) out.set(submissionId, [...(out.get(submissionId) ?? []), f]);
+  return out;
+}
+
 export async function getAssignmentForStudent(user: CurrentUser, assignmentId: string) {
   const assignment = await db.query.assignments.findFirst({ where: (a, { eq }) => eq(a.id, assignmentId) });
   if (!assignment) notFound();
   const course = await courseForStudent(user, assignment.courseId);
-  const [row] = await db
-    .select({ s: submissions, fileName: files.name, fileSize: files.size })
-    .from(submissions)
-    .leftJoin(files, eq(files.id, submissions.fileId))
-    .where(and(eq(submissions.assignmentId, assignmentId), eq(submissions.studentId, user.id)));
-  return { course, assignment, submission: row ? { ...row.s, fileName: row.fileName, fileSize: row.fileSize } : null };
+  const submission = (await db.query.submissions.findFirst({ where: (s, { and, eq }) => and(eq(s.assignmentId, assignmentId), eq(s.studentId, user.id)) })) ?? null;
+  const versions = submission ? ((await versionsOf([submission])).get(submission.id) ?? []) : [];
+  // Feedback files reach the student only with the grade (like the feedback text).
+  const feedbackFiles = submission?.grade != null ? ((await feedbackFilesOf([submission.id])).get(submission.id) ?? []) : [];
+  return { course, assignment, submission, versions, feedbackFiles };
 }
 
-/** Grading view: every enrolled student with their submission (if any). */
+/** Grading view: every enrolled student with their submission (if any), its versions and feedback files. */
 export async function getAssignmentForInstructor(user: CurrentUser, assignmentId: string) {
   const assignment = await db.query.assignments.findFirst({ where: (a, { eq }) => eq(a.id, assignmentId) });
   if (!assignment) notFound();
@@ -238,7 +291,6 @@ export async function getAssignmentForInstructor(user: CurrentUser, assignmentId
       submissionId: submissions.id,
       text: submissions.text,
       fileId: submissions.fileId,
-      fileName: files.name,
       submittedAt: submissions.submittedAt,
       grade: submissions.grade,
       feedback: submissions.feedback,
@@ -247,10 +299,41 @@ export async function getAssignmentForInstructor(user: CurrentUser, assignmentId
     .from(enrollments)
     .innerJoin(users, eq(users.id, enrollments.userId))
     .leftJoin(submissions, and(eq(submissions.studentId, users.id), eq(submissions.assignmentId, assignmentId)))
-    .leftJoin(files, eq(files.id, submissions.fileId))
     .where(eq(enrollments.courseId, assignment.courseId))
     .orderBy(sql`${submissions.submittedAt} is null`, asc(users.name));
-  return { course, assignment, rows };
+  const subs = rows.flatMap((r) => (r.submissionId && r.submittedAt ? [{ id: r.submissionId, text: r.text, fileId: r.fileId, submittedAt: r.submittedAt }] : []));
+  const [versions, feedback] = await Promise.all([versionsOf(subs), feedbackFilesOf(subs.map((s) => s.id))]);
+  return {
+    course,
+    assignment,
+    rows: rows.map((r) => ({
+      ...r,
+      versions: r.submissionId ? (versions.get(r.submissionId) ?? []) : [],
+      feedbackFiles: r.submissionId ? (feedback.get(r.submissionId) ?? []) : [],
+    })),
+  };
+}
+
+/**
+ * What "download all" packs: the LATEST version of every submission of the assignment
+ * (text and file metadata; file contents are read one at a time while the ZIP streams).
+ * Callers must have authorised `grade.edit` on the assignment's course.
+ */
+export async function latestSubmissionsForDownload(assignmentId: string) {
+  const rows = await db
+    .select({ id: submissions.id, text: submissions.text, fileId: submissions.fileId, submittedAt: submissions.submittedAt, userId: users.id, name: users.name, universityId: users.studentId })
+    .from(submissions)
+    .innerJoin(users, eq(users.id, submissions.studentId))
+    .where(eq(submissions.assignmentId, assignmentId))
+    .orderBy(asc(users.studentId), asc(users.name));
+  const versions = await versionsOf(rows);
+  return rows.map((r) => ({ ...r, latest: versions.get(r.id)?.at(-1) ?? null }));
+}
+
+/** Contents of one file (used while streaming an archive). */
+export async function fileData(fileId: string) {
+  const [row] = await db.select({ data: files.data }).from(files).where(eq(files.id, fileId));
+  return row?.data ?? Buffer.alloc(0);
 }
 
 /** Ungraded submissions across an instructor's courses (the "to grade" queue). */

@@ -45,7 +45,9 @@ export type AuditAction =
   | "structure_changed"
   | "course_staff_changed"
   | "role_changed"
-  | "bank_questions_copied";
+  | "bank_questions_copied"
+  | "feedback_file_removed"
+  | "submissions_downloaded";
 
 /**
  * Records a security or academic event. `userId` is the account the event is about;

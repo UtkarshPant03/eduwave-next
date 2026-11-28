@@ -16,7 +16,7 @@ import { firstIssue, type FormState } from "@/lib/form";
 import { formatDateTime } from "@/lib/format";
 import { audit } from "@/lib/audit";
 import { notifyCourse, notifyUser, notifyUsers } from "@/lib/notify";
-import { checkUpload } from "@/lib/uploads";
+import { checkUpload, checkUploads, MAX_FILES_LIMIT } from "@/lib/uploads";
 import { isForeignKeyViolation } from "@/lib/db-errors";
 import { checkQuestion, GRADING_METHODS, MAX_ATTEMPTS, questionFields, toQuestionColumns } from "@/lib/questions";
 
@@ -314,6 +314,7 @@ const assignmentInput = z.object({
   dueAt: isoDate("Choose a due date."),
   maxPoints: z.coerce.number().int().min(1).max(1000),
   lateDays: z.coerce.number().int().min(0).max(30),
+  maxFiles: z.coerce.number().int("Whole numbers only.").min(1, "Allow at least 1 file.").max(MAX_FILES_LIMIT, `At most ${MAX_FILES_LIMIT} files.`).default(1),
 });
 
 export async function createAssignment(input: z.input<typeof assignmentInput>): Promise<FormState> {
@@ -361,6 +362,8 @@ export async function updateAssignment(input: z.input<typeof assignmentUpdate>):
       dueAt: a.dueAt,
       maxPoints: a.maxPoints,
       lateDays: a.lateDays,
+      // Lowering it never touches versions already submitted (they keep their files).
+      maxFiles: a.maxFiles,
     })
     .where(eq(schema.assignments.id, existing.id));
 
@@ -436,6 +439,76 @@ export async function gradeSubmission(_: FormState, formData: FormData): Promise
   });
   refresh();
   return { success: "Grade saved and student notified." };
+}
+
+/** Feedback files one submission can carry (all graders together). */
+const MAX_FEEDBACK_FILES = 10;
+
+/**
+ * Attaches files to a submission's feedback (graders: `grade.edit`, so TAs too). The
+ * student can download them once the submission is graded; other students never can.
+ */
+export async function addFeedbackFiles(_: FormState, formData: FormData): Promise<FormState> {
+  const user = await requireInstructor();
+  const submissionId = uuid.safeParse(formData.get("submissionId"));
+  if (!submissionId.success) return { error: "Submission not found." };
+  const [row] = await db
+    .select({ s: schema.submissions, a: schema.assignments })
+    .from(schema.submissions)
+    .innerJoin(schema.assignments, eq(schema.assignments.id, schema.submissions.assignmentId))
+    .where(eq(schema.submissions.id, submissionId.data));
+  if (!row) return { error: "Submission not found." };
+  const course = await courseForInstructor(user, row.a.courseId, "grade.edit");
+
+  const uploads = await checkUploads(formData.getAll("files"), MAX_FEEDBACK_FILES);
+  if ("error" in uploads) return { error: uploads.error };
+  if (uploads.length === 0) return { error: "Choose at least one file." };
+
+  const error = await db.transaction(async (tx) => {
+    // Lock the submission so two graders can't exceed the limit together.
+    await tx.select({ id: schema.submissions.id }).from(schema.submissions).where(eq(schema.submissions.id, row.s.id)).for("update");
+    const already = await tx.$count(schema.feedbackFiles, eq(schema.feedbackFiles.submissionId, row.s.id));
+    if (already + uploads.length > MAX_FEEDBACK_FILES) return `A submission can have at most ${MAX_FEEDBACK_FILES} feedback files.`;
+    const added = await tx
+      .insert(schema.files)
+      .values(uploads.map((u) => ({ courseId: course.id, uploaderId: user.id, size: u.data.length, ...u })))
+      .returning({ id: schema.files.id });
+    await tx.insert(schema.feedbackFiles).values(added.map((f) => ({ submissionId: row.s.id, fileId: f.id, uploadedBy: user.id })));
+    return null;
+  });
+  if (error) return { error };
+
+  // Before grading the student can't see feedback yet; they hear about it with the grade.
+  if (row.s.grade != null) {
+    await notifyUser(row.s.studentId, {
+      title: `${course.code}: feedback file added`,
+      body: row.a.title,
+      link: `/student/assignments/${row.a.id}`,
+    });
+  }
+  refresh();
+  return { success: uploads.length === 1 ? "Feedback file attached." : `${uploads.length} feedback files attached.` };
+}
+
+/** Removes a feedback file (a grader's own material, not student work). */
+export async function removeFeedbackFile(formData: FormData) {
+  const user = await requireInstructor();
+  const id = uuid.safeParse(formData.get("feedbackFileId"));
+  if (!id.success) return;
+  const [row] = await db
+    .select({ fileId: schema.feedbackFiles.fileId, courseId: schema.assignments.courseId })
+    .from(schema.feedbackFiles)
+    .innerJoin(schema.submissions, eq(schema.submissions.id, schema.feedbackFiles.submissionId))
+    .innerJoin(schema.assignments, eq(schema.assignments.id, schema.submissions.assignmentId))
+    .where(eq(schema.feedbackFiles.id, id.data));
+  if (!row) return;
+  const course = await courseForInstructor(user, row.courseId, "grade.edit");
+  await db.transaction(async (tx) => {
+    await tx.delete(schema.feedbackFiles).where(eq(schema.feedbackFiles.id, id.data));
+    await tx.delete(schema.files).where(eq(schema.files.id, row.fileId));
+  });
+  await audit(user.id, "feedback_file_removed", `${course.code} ${course.term}: file ${row.fileId}`);
+  refresh();
 }
 
 /* --------------------------------- quizzes --------------------------------- */

@@ -3,7 +3,7 @@
  */
 import "server-only";
 import { notFound } from "next/navigation";
-import { and, asc, count, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { CurrentUser } from "@/lib/auth/dal";
 import { canAccessCourse } from "@/lib/access";
@@ -82,7 +82,8 @@ export function listAuditLog(userId: string) {
 
 /**
  * A file may be downloaded by members of its course. Assignment submission files are
- * additionally private: only the uploader and the course's instructor may read them.
+ * additionally private: only the uploader and the course's staff may read them. Feedback
+ * files: course staff, and the student whose submission they belong to once it is graded.
  */
 export async function getFileForUser(user: CurrentUser, fileId: string) {
   // Authorise on the metadata first; read the (possibly large) contents only if allowed.
@@ -93,9 +94,17 @@ export async function getFileForUser(user: CurrentUser, fileId: string) {
     .where(eq(files.id, fileId));
   if (!meta || !(await canAccessCourse(user, meta.courseId))) return null;
   if (user.role === "student" && meta.uploaderId !== user.id) {
-    // Students may only read files that instructors attached to resources.
+    // Students may only read files that instructors attached to resources, and the
+    // feedback files of their own graded submissions.
     const isResource = await db.query.resources.findFirst({ where: (r, { eq }) => eq(r.fileId, fileId), columns: { id: true } });
-    if (!isResource) return null;
+    if (!isResource) {
+      const [ownFeedback] = await db
+        .select({ id: schema.feedbackFiles.id })
+        .from(schema.feedbackFiles)
+        .innerJoin(schema.submissions, eq(schema.submissions.id, schema.feedbackFiles.submissionId))
+        .where(and(eq(schema.feedbackFiles.fileId, fileId), eq(schema.submissions.studentId, user.id), isNotNull(schema.submissions.grade)));
+      if (!ownFeedback) return null;
+    }
   }
   const file = await db.query.files.findFirst({ where: (f, { eq }) => eq(f.id, fileId) });
   return file ? { ...file, uploaderRole: meta.uploaderRole } : null;

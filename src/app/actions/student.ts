@@ -2,7 +2,7 @@
 
 import { timingSafeEqual } from "node:crypto";
 import { refresh } from "next/cache";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/db";
 import { courseForStudent } from "@/lib/access";
@@ -12,7 +12,7 @@ import { firstIssue, type FormState } from "@/lib/form";
 import { assignmentWindow } from "@/lib/grading";
 import { notifyUser } from "@/lib/notify";
 import { attemptEndsAt, buildLayout, chooseQuestions, finalizeAttempt, finalizeExpiredAttempts, isAttemptOpen } from "@/lib/quiz-engine";
-import { checkUpload } from "@/lib/uploads";
+import { checkUploads } from "@/lib/uploads";
 
 const uuid = z.uuid();
 
@@ -65,10 +65,20 @@ const submissionInput = z.object({
   text: z.string().trim().max(50_000).optional(),
 });
 
+/** Thrown inside the transaction to roll back files already inserted. */
+class SubmitRefused extends Error {}
+
+/**
+ * Submits or resubmits. Every call before grading creates a new read-only VERSION (text +
+ * files); earlier versions are kept. Files of the previous version can be kept (`keep`
+ * holds their ids) and new ones added (`files`), up to the assignment's maximum.
+ */
 export async function submitAssignment(_: FormState, formData: FormData): Promise<FormState> {
   const user = await requireStudent();
-  const parsed = submissionInput.safeParse(Object.fromEntries(formData));
+  const parsed = submissionInput.safeParse({ assignmentId: formData.get("assignmentId"), text: formData.get("text") ?? undefined });
   if (!parsed.success) return { error: firstIssue(parsed.error) };
+  const keepParsed = z.array(uuid).max(20).safeParse(formData.getAll("keep"));
+  if (!keepParsed.success) return { error: "Invalid file selection." };
   const assignment = await db.query.assignments.findFirst({ where: (a, { eq }) => eq(a.id, parsed.data.assignmentId) });
   if (!assignment) return { error: "Assignment not found." };
   const course = await courseForStudent(user, assignment.courseId);
@@ -76,52 +86,99 @@ export async function submitAssignment(_: FormState, formData: FormData): Promis
   const window = assignmentWindow(assignment, Date.now());
   if (!window.open) return { error: "Submissions for this assignment are closed." };
 
-  // Validate the upload BEFORE the transaction: reading a file shouldn't hold row locks.
-  const file = formData.get("file");
-  let upload: Awaited<ReturnType<typeof checkUpload>> | null = null;
-  if (file instanceof File && file.size > 0) {
-    upload = await checkUpload(file);
-    if ("error" in upload) return { error: upload.error };
-  }
+  // Validate the uploads BEFORE the transaction: reading files shouldn't hold row locks.
+  // (The legacy single-file field name "file" is accepted too.)
+  const uploads = await checkUploads([...formData.getAll("files"), ...formData.getAll("file")], assignment.maxFiles);
+  if ("error" in uploads) return { error: uploads.error };
   const text = parsed.data.text || null;
+  const max = assignment.maxFiles;
 
-  const result = await db.transaction(async (tx) => {
-    // Lock this student's submission (if any): an instructor grading at the same moment
-    // waits for us, and we can't overwrite work that was graded after we looked.
-    const [existing] = await tx
-      .select({ id: schema.submissions.id, grade: schema.submissions.grade, fileId: schema.submissions.fileId })
-      .from(schema.submissions)
-      .where(and(eq(schema.submissions.assignmentId, assignment.id), eq(schema.submissions.studentId, user.id)))
-      .for("update");
-    if (existing?.grade != null) return { error: "This submission has already been graded and can't be changed." };
+  let result: { first: boolean; versionNumber: number } | { error: string };
+  try {
+    result = await db.transaction(async (tx) => {
+      // Lock this student's submission (if any): an instructor grading at the same moment
+      // waits for us, and we can't add a version to work that was graded after we looked.
+      const [existing] = await tx
+        .select({ id: schema.submissions.id, grade: schema.submissions.grade, fileId: schema.submissions.fileId, text: schema.submissions.text, submittedAt: schema.submissions.submittedAt })
+        .from(schema.submissions)
+        .where(and(eq(schema.submissions.assignmentId, assignment.id), eq(schema.submissions.studentId, user.id)))
+        .for("update");
+      if (existing?.grade != null) return { error: "This submission has already been graded and can't be changed." };
 
-    let fileId = existing?.fileId ?? null;
-    if (upload && !("error" in upload)) {
-      const [f] = await tx
-        .insert(schema.files)
-        .values({ courseId: course.id, uploaderId: user.id, size: upload.data.length, ...upload })
-        .returning({ id: schema.files.id });
-      fileId = f.id;
-    }
-    if (!text && !fileId) return { error: "Add some text or attach a file." };
+      // Files of the latest version: the only ones that may be kept.
+      let latestFiles: string[] = [];
+      if (existing) {
+        const versions = await tx
+          .select({ id: schema.submissionVersions.id })
+          .from(schema.submissionVersions)
+          .where(eq(schema.submissionVersions.submissionId, existing.id))
+          .orderBy(desc(schema.submissionVersions.versionNumber))
+          .limit(1);
+        if (versions[0]) {
+          const rows = await tx
+            .select({ fileId: schema.submissionFiles.fileId })
+            .from(schema.submissionFiles)
+            .where(eq(schema.submissionFiles.versionId, versions[0].id))
+            .orderBy(asc(schema.submissionFiles.position));
+          latestFiles = rows.map((r) => r.fileId);
+        } else {
+          // A submission written before versions existed (and not back-filled): record it
+          // as version 1 first, so the history keeps it.
+          const [v1] = await tx
+            .insert(schema.submissionVersions)
+            .values({ submissionId: existing.id, versionNumber: 1, text: existing.text, submittedAt: existing.submittedAt })
+            .returning({ id: schema.submissionVersions.id });
+          if (existing.fileId) {
+            await tx.insert(schema.submissionFiles).values({ versionId: v1.id, fileId: existing.fileId, position: 0 });
+            latestFiles = [existing.fileId];
+          }
+        }
+      }
+      const keep = new Set(keepParsed.data);
+      const kept = latestFiles.filter((id) => keep.has(id));
+      if (kept.length + uploads.length > max)
+        return { error: `This assignment accepts at most ${max} file${max === 1 ? "" : "s"}. Remove some before adding more.` };
+      if (!text && kept.length + uploads.length === 0) return { error: "Add some text or attach a file." };
 
-    await tx
-      .insert(schema.submissions)
-      .values({ assignmentId: assignment.id, studentId: user.id, text, fileId })
-      .onConflictDoUpdate({
-        target: [schema.submissions.assignmentId, schema.submissions.studentId],
-        set: { text, fileId, submittedAt: sql`now()` },
-        // Belt and braces: never touch a graded submission.
-        setWhere: sql`${schema.submissions.grade} is null`,
-      });
-    // Remove the replaced file only after the new one is safely referenced.
-    if (existing?.fileId && existing.fileId !== fileId) await tx.delete(schema.files).where(eq(schema.files.id, existing.fileId));
-    return { first: !existing };
-  });
+      const added = uploads.length
+        ? await tx
+            .insert(schema.files)
+            .values(uploads.map((u) => ({ courseId: course.id, uploaderId: user.id, size: u.data.length, ...u })))
+            .returning({ id: schema.files.id })
+        : [];
+      const fileIds = [...kept, ...added.map((f) => f.id)];
+
+      const [sub] = await tx
+        .insert(schema.submissions)
+        .values({ assignmentId: assignment.id, studentId: user.id, text, fileId: fileIds[0] ?? null })
+        .onConflictDoUpdate({
+          target: [schema.submissions.assignmentId, schema.submissions.studentId],
+          set: { text, fileId: fileIds[0] ?? null, submittedAt: sql`now()` },
+          // Belt and braces: never touch a graded submission.
+          setWhere: sql`${schema.submissions.grade} is null`,
+        })
+        .returning({ id: schema.submissions.id, submittedAt: schema.submissions.submittedAt });
+      // Nothing returned: it was graded in the meantime. Roll back the files inserted above.
+      if (!sub) throw new SubmitRefused("This submission has already been graded and can't be changed.");
+
+      const [{ next }] = await tx
+        .select({ next: sql<number>`coalesce(max(${schema.submissionVersions.versionNumber}), 0) + 1`.mapWith(Number) })
+        .from(schema.submissionVersions)
+        .where(eq(schema.submissionVersions.submissionId, sub.id));
+      const [version] = await tx
+        .insert(schema.submissionVersions)
+        .values({ submissionId: sub.id, versionNumber: next, text, submittedAt: sub.submittedAt })
+        .returning({ id: schema.submissionVersions.id });
+      if (fileIds.length) await tx.insert(schema.submissionFiles).values(fileIds.map((fileId, position) => ({ versionId: version.id, fileId, position })));
+      return { first: !existing, versionNumber: next };
+    });
+  } catch (err) {
+    if (err instanceof SubmitRefused) return { error: err.message };
+    throw err;
+  }
   if ("error" in result) return { error: result.error };
-  const existing = !result.first;
 
-  if (!existing) {
+  if (result.first) {
     await notifyUser(course.instructorId, {
       title: `${course.code}: new submission`,
       body: `${user.name} · ${assignment.title}${window.late ? " (late)" : ""}`,
@@ -129,7 +186,8 @@ export async function submitAssignment(_: FormState, formData: FormData): Promis
     });
   }
   refresh();
-  return { success: window.late ? "Submitted (late)." : existing ? "Submission updated." : "Submitted. Good luck!" };
+  if (window.late) return { success: result.first ? "Submitted (late)." : `Submission updated (late): version ${result.versionNumber} saved.` };
+  return { success: result.first ? "Submitted. Good luck!" : `Submission updated: version ${result.versionNumber} saved.` };
 }
 
 /* ---------------------------------- quizzes ---------------------------------- */
