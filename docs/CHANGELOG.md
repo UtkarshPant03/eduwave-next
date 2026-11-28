@@ -1,5 +1,41 @@
 # Changelog
 
+## 4.5.0: Phase 3, assignments: several files, versions, feedback files, bulk download (2026-11-28, built, in QA)
+
+**Database (migration `0006_assignment_versions`, additive)**
+- `assignments.max_files` (1–20, default 1 = the previous behaviour). New tables `submission_versions`, `submission_files` and `feedback_files`.
+- `submissions` is still the one graded row per student; `text`, `file_id` and `submitted_at` now mirror the **latest** version, so grades, grade history, the grading queue, the gradebook and late flags read exactly what they did before.
+- **Back-fill:** every existing submission becomes version 1 with its text, time and (single) file. Verified on PGlite by upgrading a 0005 database holding a graded and an ungraded submission: submissions and grade history unchanged, two versions and one version file created.
+- **Rules in the database:** versions and their file links are append-only; a graded submission accepts no new version; version numbers are consecutive; a version's files belong to the course and were uploaded by the submitting student; a version holds at most `max_files` files when written; feedback files belong to the submission's course; RESTRICT keys stop versions, their files and feedback files from being deleted as a side effect. Plan and rollback: `DATABASE.md`.
+
+**Students**
+- An assignment can accept several files (the setting is shown on the page, with the limits: up to N files, 8 MB in total per upload, the allowed types). Each file passes the existing checks (type, contents match the extension, 8 MB).
+- Every (re)submission before grading is saved as a **new version**. When resubmitting, the files of the latest version are listed with "Keep" ticks; unticked files are left out of the new version but stay in the earlier one. The page shows a "Submission history" with every version, its time, a Late badge and its files.
+- Files chosen together are checked in the browser against the count and the 8 MB total before anything is sent, and again on the server.
+- Feedback files from the grader appear with the grade (not before).
+
+**Staff**
+- "Maximum files per submission" in the assignment form (create and edit). Lowering it never removes files already submitted.
+- The grading view shows the latest version (the one being graded), the version history, and a "Files for the student" box: graders (`grade.edit`, so teaching assistants too) attach files (up to 10 per submission) and can remove them (logged in the audit log). Attaching after grading notifies the student.
+- **Download all (ZIP)** on the grading page: the latest version of every submission, one folder per student named with the university ID, the online text as `online-text.txt`, plus `submissions.csv` (student, folder, version, time, late, number of files). Names are sanitised (no separators, no `.`/`..`, no Windows device names) and duplicates numbered. Built with a small store-only ZIP writer in `src/lib/zip.ts` (no new dependency), streamed one file at a time. Graders only: students get 401, staff of other courses 404. Each download is logged in the audit log.
+
+**Security**
+- Feedback files: course staff, and the student who owns the submission **once it is graded**; anyone else gets 404 (`getFileForUser`).
+- Students' PDFs still always download (never inline); feedback PDFs uploaded by staff open inline like course materials.
+
+**Seed**
+- CS201 "Lab 2: Singly linked list" accepts 3 files. Ananya Rao (24CS1001) submitted it twice (version 1: one file; version 2: two files, graded 18/20) and has a feedback file `lab2-feedback.pdf`. All other seeded submissions are version 1.
+
+**Limitations**
+- **Reopening a graded submission is not built** (spec: optional). Once graded, the student can't submit again; staff can still change the grade.
+- The request limit stays at 9 MB (`serverActions.bodySizeLimit`), so all files sent in one submission share 8 MB. Several large files need several submissions (keep the earlier files ticked).
+- The ZIP is not compressed (student files are mostly already compressed formats) and has no ZIP64 support (4 GB / 65,535 entries; far above course scale).
+- Feedback files are not versioned and are not tied to a particular version (they belong to the submission, whose latest version is the graded one).
+
+**Tests**
+- New `tests/unit/submissions.test.ts` (12 checks: CRC-32, ZIP read-back, safe names and path traversal, duplicate names, multi-file limits). `test:unit` goes to 53.
+- No new browser suite (QA to follow). Dev checks: typecheck, lint, build, unit, migrate + seed from scratch; `test:e2e` 42/42 and `test:security` 10/10 against a fresh seed with the new code.
+
 ## 4.4.0: Phase 3, question bank, question types and attempts (2026-11-28, built, in QA)
 
 **Database (migration `0005_question_bank`, additive)**

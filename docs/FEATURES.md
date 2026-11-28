@@ -138,6 +138,10 @@ Your differentiator might be one well-chosen Advanced feature done properly, not
 | ASG-11 | Peer review | Advanced | ⬜ | Anonymous allocation of 2–3 reviewers per submission. |
 | ASG-12 | Edit after publishing | Core | ✅ | Change title, instructions, dates, points, late window. Maximum can't drop below a grade already awarded; students notified when the deadline changes. |
 | ASG-13 | Graded work can't be deleted | Core | ✅ | Deleting an assignment that has submissions is refused **by the server**, with a reason (a confirm dialog alone is not protection). |
+| ASG-14 | Several files per submission | Standard | 🟡 built, in QA (4.5) | Per-assignment maximum (1–20, default 1); every file passes the upload checks; files sent together stay within 8 MB; the page states the limits. |
+| ASG-15 | Submission history (versions) | Standard | 🟡 built, in QA (4.5) | Each (re)submission before grading is a read-only version (database-enforced); staff and the student see every version with time and Late flag; the latest is graded. Reopening a graded submission is not built. |
+| ASG-16 | Feedback files | Standard | 🟡 built, in QA (4.5) | Graders (TAs too) attach files; the owning student downloads them once graded; other students get 404. |
+| ASG-17 | Download all submissions | Standard | 🟡 built, in QA (4.5) | One ZIP of the latest versions, a folder per university ID, sanitised names, manifest CSV; graders only. |
 
 ### 3.5 Quizzes (`QZ`)
 
@@ -272,8 +276,10 @@ courses(id, code, term, title, credits, instructor_id → users, enrollment_key,
 enrollments(course_id → courses, user_id → users)                                           pk(course_id, user_id)
 sections(id, course_id → courses, position, title)
 resources(id, course_id, section_id?, title, url? | file_id?)
-assignments(id, course_id, section_id?, title, instructions, due_at, max_points, late_days)
-submissions(id, assignment_id, student_id, text?, file_id?, submitted_at, grade?, feedback?)  unique(assignment_id, student_id)
+assignments(id, course_id, section_id?, title, instructions, due_at, max_points, late_days, max_files)
+submissions(id, assignment_id, student_id, text?, file_id?, submitted_at, grade?, feedback?)  unique(assignment_id, student_id)   (text/file/time = latest version)
+submission_versions(id, submission_id, version_number, text?, submitted_at);  submission_files(version_id, file_id, position)   append-only
+feedback_files(id, submission_id, file_id, uploaded_by)
 quizzes(id, course_id, section_id?, title, time_limit, deadline, opens_at?, shuffle, max_attempts, grading_method)
 questions(id, quiz_id, position, type, prompt, options[], answer key by type, points, slot_id?)
 quiz_slots(id, quiz_id, position, category, pick_count, points)                              "random N from category"
@@ -330,6 +336,7 @@ Add a row whenever a feature's status changes. Newest first.
 
 | Date | Version | Change | Feature IDs |
 |---|---|---|---|
+| 2026-11-28 | 4.5 | Assignments: several files per submission, submission versions, feedback files, download all as ZIP. Built, in QA (see docs/CHANGELOG.md) | ASG-14..17 |
 | 2026-11-28 | 4.4 | Question bank (categories, tags, department sharing by copy), question types and points, random slots, open date, multiple attempts with grading method. Built, in QA (see docs/CHANGELOG.md) | QZ-11, QZ-12, QZ-15 |
 | 2026-11-27 | 4.3 | Attendance: class sessions, sheets, percentages, configurable minimum, correction requests with approval, append-only history, CSV (see docs/CHANGELOG.md) | SCH-05 |
 | 2026-11-27 | 4.0 | Production hardening: audit, security fixes, database-enforced integrity, transactional quizzes and grading, grade history, production configuration checks, institutional redesign, CI (see docs/CHANGELOG.md) | ADM-12, UI-05, UI-10 |

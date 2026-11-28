@@ -64,8 +64,12 @@ Roles: **A** admin · **I** instructor · **S** student. "Tests" names the suite
 | Feature | Roles | Code | Data | Tests | Status | Issues / action |
 |---|---|---|---|---|---|---|
 | Create and edit; Markdown instructions; due date; late window; max points | I | `create/updateAssignment` | assignments | e2e, stab | **Verified** | No separate cut-off date (late window acts as one) |
-| Submit text and/or one file; resubmit until graded | S | `submitAssignment` | submissions, files | e2e, sec | **Verified** | One file only. Resubmission overwrites, so no submission history |
-| Grading with feedback text; max enforced; concurrency-safe; history | I | `gradeSubmission` | submissions, grade_events | e2e, stab, db | **Verified** | No rubric, marking guide, feedback files, grade release, anonymous marking, group assignments or bulk download |
+| Submit text and/or one file; resubmit until graded | S | `submitAssignment` | submissions, files | e2e, sec | **Verified** | Superseded by the rows below (4.5) |
+| Several files per submission (per-assignment maximum 1–20); each file validated; 8 MB per upload in total | S, I | `submitAssignment`, `checkUploads`, assignment form | assignments.max_files, submission_files | unit | **Built, in QA** (4.5) | All files of one upload share 8 MB (9 MB request limit) |
+| Submission history: every (re)submission is a read-only version; latest is graded; files of the latest version can be kept | S, I | `submitAssignment`, `VersionHistory` | submission_versions, submission_files (append-only) | unit (limits), dev smoke | **Built, in QA** (4.5) | No reopening of a graded submission (optional, not built) |
+| Feedback files (graders incl. TAs); student sees them once graded; others 404 | I, S | `addFeedbackFiles`, `removeFeedbackFile`, `getFileForUser` | feedback_files | dev smoke | **Built, in QA** (4.5) | Not tied to a version; not versioned |
+| Download all latest submissions as ZIP (folder per university ID, manifest CSV) | I | `/instructor/assignments/[id]/download`, `lib/zip.ts` | — | unit (ZIP, names) | **Built, in QA** (4.5) | Store-only, no ZIP64; graders only |
+| Grading with feedback text; max enforced; concurrency-safe; history | I | `gradeSubmission` | submissions, grade_events | e2e, stab, db | **Verified** | No rubric, marking guide, grade release, anonymous marking or group assignments (feedback files and bulk download: 4.5, below) |
 | Graded work protected from deletion | I | `deleteActivity`, RESTRICT | — | stab, db | **Verified** | — |
 
 ## Quizzes and examinations
