@@ -1,12 +1,14 @@
 import Link from "next/link";
-import { CheckCircle2, ChevronDown, Clock, FileText, Inbox, Paperclip, Pencil, Users } from "lucide-react";
-import { gradeSubmission } from "@/app/actions/instructor";
+import { CheckCircle2, ChevronDown, Clock, Download, FileText, Inbox, Pencil, Users } from "lucide-react";
+import { addFeedbackFiles, gradeSubmission, removeFeedbackFile } from "@/app/actions/instructor";
 import { ActionForm } from "@/components/action-form";
+import { FileLinks, VersionHistory } from "@/components/course/submission-files";
 import { Markdown } from "@/components/markdown";
 import { Avatar, Badge, buttonClass, Card, Field, Input, PageHeader, StatTile, Textarea } from "@/components/ui";
 import { requireInstructor } from "@/lib/auth/dal";
 import { getAssignmentForInstructor } from "@/lib/data/assessments";
 import { formatDateTime, formatPercent } from "@/lib/format";
+import { ACCEPT_ATTR } from "@/lib/uploads";
 import { routeIds } from "@/lib/route-ids";
 
 export default async function GradeAssignmentPage({ params }: PageProps<"/instructor/assignments/[assignmentId]">) {
@@ -25,8 +27,17 @@ export default async function GradeAssignmentPage({ params }: PageProps<"/instru
         breadcrumbs={[{ label: "My courses", href: "/instructor/courses" }, { label: course.code, href: `/instructor/courses/${course.id}` }, { label: assignment.title }]}
         eyebrow="Assignment"
         title={assignment.title}
-        subtitle={`Due ${formatDateTime(assignment.dueAt)} · ${assignment.maxPoints} points · late window ${assignment.lateDays} day(s)`}
-        action={<Link href={`/instructor/assignments/${assignment.id}/edit`} className={buttonClass("secondary")}><Pencil className="size-4" /> Edit</Link>}
+        subtitle={`Due ${formatDateTime(assignment.dueAt)} · ${assignment.maxPoints} points · late window ${assignment.lateDays} day(s) · up to ${assignment.maxFiles} file(s) per submission`}
+        action={
+          <div className="flex flex-wrap gap-2">
+            {submitted.length > 0 && (
+              <a href={`/instructor/assignments/${assignment.id}/download`} download className={buttonClass("secondary")}>
+                <Download className="size-4" /> Download all (ZIP)
+              </a>
+            )}
+            <Link href={`/instructor/assignments/${assignment.id}/edit`} className={buttonClass("secondary")}><Pencil className="size-4" /> Edit</Link>
+          </div>
+        }
       />
 
       <div className="stagger mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -56,12 +67,35 @@ export default async function GradeAssignmentPage({ params }: PageProps<"/instru
                 {r.submissionId && (
                   <div className="grid gap-5 border-t border-border p-4 lg:grid-cols-[1fr_16rem] [&>*]:min-w-0">
                     <div className="space-y-3 text-sm">
-                      {r.text ? <div className="rounded-xl bg-surface-2/60 p-4"><Markdown text={r.text} /></div> : <p className="text-muted">No text submitted.</p>}
-                      {r.fileId && (
-                        <a href={`/files/${r.fileId}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-xl border border-border px-3 py-2 hover:border-accent">
-                          <Paperclip className="size-4 text-accent" /> {r.fileName}
-                        </a>
+                      {r.versions.length > 1 && (
+                        <p className="text-xs text-muted">Version {r.versions.at(-1)!.versionNumber} (latest, the one you grade)</p>
                       )}
+                      {r.text ? <div className="rounded-xl bg-surface-2/60 p-4"><Markdown text={r.text} /></div> : <p className="text-muted">No text submitted.</p>}
+                      <FileLinks files={r.versions.at(-1)?.files ?? []} />
+                      <VersionHistory versions={r.versions} dueAt={assignment.dueAt} />
+                      <div className="space-y-2 rounded-xl border border-border p-3">
+                        <p className="text-xs font-medium text-muted">Files for the student ({r.grade != null ? "visible now" : "visible once graded"})</p>
+                        <FileLinks
+                          files={r.feedbackFiles}
+                          extra={(f) => {
+                            const ff = r.feedbackFiles.find((x) => x.id === f.id);
+                            return ff ? (
+                              <form action={removeFeedbackFile}>
+                                <input type="hidden" name="feedbackFileId" value={ff.feedbackFileId} />
+                                <button type="submit" className="rounded-md px-1.5 py-1 text-xs text-danger hover:bg-danger/10">
+                                  Remove<span className="sr-only"> {f.name}</span>
+                                </button>
+                              </form>
+                            ) : null;
+                          }}
+                        />
+                        <ActionForm action={addFeedbackFiles} submitLabel="Attach files" className="grid gap-2">
+                          <input type="hidden" name="submissionId" value={r.submissionId} />
+                          <Field label="Add files for the student" hint="Up to 10 per submission · 8 MB in total per upload">
+                            <Input name="files" type="file" multiple accept={ACCEPT_ATTR} required />
+                          </Field>
+                        </ActionForm>
+                      </div>
                     </div>
                     <ActionForm action={gradeSubmission} submitLabel={r.grade != null ? "Update grade" : "Save grade"}>
                       <input type="hidden" name="submissionId" value={r.submissionId} />

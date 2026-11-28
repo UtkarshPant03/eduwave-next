@@ -1,18 +1,20 @@
-import { AlarmClock, Award, CheckCircle2, FileText, MessageSquareQuote, Paperclip } from "lucide-react";
+import { AlarmClock, Award, CheckCircle2, FileText, Files, MessageSquareQuote } from "lucide-react";
 import { SubmissionForm } from "@/components/client/submission-form";
+import { FileLinks, VersionHistory } from "@/components/course/submission-files";
 import { Markdown } from "@/components/markdown";
 import { Badge, Card, IconChip, PageHeader, ProgressRing } from "@/components/ui";
 import { requireStudent } from "@/lib/auth/dal";
 import { getAssignmentForStudent } from "@/lib/data/assessments";
-import { formatBytes, formatDateTime, formatRelative, requestTime } from "@/lib/format";
+import { formatDateTime, formatRelative, requestTime } from "@/lib/format";
 import { assignmentWindow } from "@/lib/grading";
-import { ACCEPT_ATTR } from "@/lib/uploads";
+import { ACCEPT_ATTR, MAX_REQUEST_UPLOAD_BYTES } from "@/lib/uploads";
 import { routeIds } from "@/lib/route-ids";
 
 export default async function StudentAssignmentPage({ params }: PageProps<"/student/assignments/[assignmentId]">) {
   const { assignmentId } = routeIds(await params);
   const user = await requireStudent();
-  const { course, assignment, submission } = await getAssignmentForStudent(user, assignmentId);
+  const { course, assignment, submission, versions, feedbackFiles } = await getAssignmentForStudent(user, assignmentId);
+  const latest = versions.at(-1) ?? null;
   const now = requestTime();
   const win = assignmentWindow(assignment, now);
   const graded = submission?.grade != null;
@@ -40,28 +42,40 @@ export default async function StudentAssignmentPage({ params }: PageProps<"/stud
                 </div>
               </div>
               {submission.feedback && <div className="mt-4 rounded-xl bg-surface-2 p-4 text-sm"><Markdown text={submission.feedback} /></div>}
+              {feedbackFiles.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  <p className="text-xs font-medium text-muted">Files from your grader</p>
+                  <FileLinks files={feedbackFiles} />
+                </div>
+              )}
             </Card>
           )}
 
           <Card title={submission ? "Your submission" : "Submit your work"}>
             {submission && (
-              <div className="mb-4 space-y-2 rounded-xl border border-border p-4 text-sm">
+              <div className="mb-4 space-y-3 rounded-xl border border-border p-4 text-sm">
                 <p className="flex flex-wrap items-center gap-2">
                   <CheckCircle2 className="size-4 text-success" /> Submitted {formatDateTime(submission.submittedAt)}
                   {submission.submittedAt > assignment.dueAt && <Badge tone="warning">Late</Badge>}
+                  {latest && versions.length > 1 && <Badge tone="accent">Version {latest.versionNumber}</Badge>}
                 </p>
-                {submission.text && <div className="rounded-lg bg-surface-2/60 p-3"><Markdown text={submission.text} /></div>}
-                {submission.fileId && (
-                  <a href={`/files/${submission.fileId}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 hover:border-accent">
-                    <Paperclip className="size-4 text-accent" /> {submission.fileName} <span className="text-xs text-muted">{formatBytes(submission.fileSize ?? 0)}</span>
-                  </a>
-                )}
+                {latest?.text && <div className="rounded-lg bg-surface-2/60 p-3"><Markdown text={latest.text} /></div>}
+                {latest && <FileLinks files={latest.files} />}
+                <VersionHistory versions={versions} dueAt={assignment.dueAt} />
               </div>
             )}
             {graded ? (
               <p className="text-sm text-muted">This submission has been graded and is now final.</p>
             ) : win.open ? (
-              <SubmissionForm assignmentId={assignment.id} defaultText={submission?.text ?? ""} hasFile={Boolean(submission?.fileId)} accept={ACCEPT_ATTR} resubmit={Boolean(submission)} />
+              <SubmissionForm
+                assignmentId={assignment.id}
+                defaultText={latest?.text ?? ""}
+                currentFiles={(latest?.files ?? []).map((f) => ({ id: f.id, name: f.name, size: f.size }))}
+                maxFiles={assignment.maxFiles}
+                maxBytes={MAX_REQUEST_UPLOAD_BYTES}
+                accept={ACCEPT_ATTR}
+                resubmit={Boolean(submission)}
+              />
             ) : (
               <p className="text-sm text-muted">Submissions closed on {formatDateTime(win.closesAt)}.</p>
             )}
@@ -81,6 +95,10 @@ export default async function StudentAssignmentPage({ params }: PageProps<"/stud
               <li className="flex items-center gap-3">
                 <IconChip tone="success"><Award /></IconChip>
                 <span><span className="block text-xs text-muted">Points</span>{assignment.maxPoints}</span>
+              </li>
+              <li className="flex items-center gap-3">
+                <IconChip tone="neutral"><Files /></IconChip>
+                <span><span className="block text-xs text-muted">Files per submission</span>Up to {assignment.maxFiles} · 8 MB in total per upload</span>
               </li>
               {assignment.lateDays > 0 && (
                 <li className="rounded-xl bg-surface-2 p-3 text-xs text-muted">

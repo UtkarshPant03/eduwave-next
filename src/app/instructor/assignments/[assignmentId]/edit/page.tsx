@@ -41,6 +41,7 @@ export default async function EditAssignmentPage({ params }: PageProps<"/instruc
           dueAt: assignment.dueAt.toISOString(),
           maxPoints: assignment.maxPoints,
           lateDays: assignment.lateDays,
+          maxFiles: assignment.maxFiles,
         }}
       />
     </>

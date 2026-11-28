@@ -7,7 +7,7 @@ import { Markdown } from "@/components/markdown";
 import { Button, Card, Field, FormMessage, Input, Select, Textarea } from "@/components/ui";
 import { LocalDateTimeInput } from "./local-datetime-input";
 
-export type AssignmentInitial = { id: string; title: string; instructions: string; sectionId: string | null; dueAt: string; maxPoints: number; lateDays: number };
+export type AssignmentInitial = { id: string; title: string; instructions: string; sectionId: string | null; dueAt: string; maxPoints: number; lateDays: number; maxFiles: number };
 
 /**
  * Assignment editor with a live Markdown preview (same renderer students see).
@@ -45,6 +45,7 @@ export function AssignmentBuilder({
             dueAt: due ? new Date(due).toISOString() : "",
             maxPoints: Number(fd.get("maxPoints")),
             lateDays: Number(fd.get("lateDays")),
+            maxFiles: Number(fd.get("maxFiles")),
           };
           // On success both actions redirect; a value comes back only on failure.
           const res = initial ? await updateAssignment({ id: initial.id, ...fields }) : await createAssignment({ courseId, ...fields });
@@ -85,6 +86,9 @@ export function AssignmentBuilder({
             <Field label="Maximum points"><Input name="maxPoints" type="number" min={minPoints} max={1000} defaultValue={initial?.maxPoints ?? 100} required /></Field>
             <Field label="Late submissions" hint="Accepted (and marked late) for this many days after the due date.">
               <Input name="lateDays" type="number" min={0} max={30} defaultValue={initial?.lateDays ?? 2} required />
+            </Field>
+            <Field label="Maximum files per submission" hint="1 to 20. Files sent together must be 8 MB or smaller in total. Lowering this never removes files already submitted.">
+              <Input name="maxFiles" type="number" min={1} max={20} defaultValue={initial?.maxFiles ?? 1} required />
             </Field>
           </div>
         </Card>
