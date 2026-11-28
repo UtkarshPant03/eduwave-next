@@ -72,14 +72,15 @@ Roles: **A** admin · **I** instructor · **S** student. "Tests" names the suite
 
 | Feature | Roles | Code | Data | Tests | Status | Issues / action |
 |---|---|---|---|---|---|---|
-| Builder: single-answer multiple choice (2–6 options), explanations, reorder, duplicate | I | `quiz-builder.tsx`, `createQuiz` | quizzes, questions | e2e | **Verified** | **Multiple choice only.** No multi-answer, true/false, short answer, numerical, essay or matching |
-| Server timer, deadline, auto-submit, abandoned-attempt scoring | S | `quiz-engine.ts` | attempts | stab, db | **Verified** | No open date (available from creation). No grace or "must submit" policy choice |
-| One attempt per student (DB unique) | S | — | attempts unique | db | **Verified** | **No multiple attempts** or grading method |
+| Builder: question types single choice, multiple answer (all-or-nothing), true/false, short answer, numerical (± tolerance); points per question; explanations, reorder, duplicate | I | `quiz-builder.tsx`, `question-fields.tsx`, `createQuiz`, `lib/questions.ts` | quizzes, questions (type, points, key columns; shape CHECK) | e2e (single choice), unit (types) | **Built, in QA** (4.4) | No essay/manual grading, matching or partial credit. New types have unit tests and a dev smoke check only; no browser suite yet |
+| Server timer, deadline, auto-submit, abandoned-attempt scoring; optional open date | S | `quiz-engine.ts`, `startAttempt` | attempts, quizzes.opens_at (+ trigger) | stab, db | **Verified** (open date: **Built, in QA**) | No grace or "must submit" policy choice |
+| Attempts: 1–10 per quiz (default 1), grading method highest/average/first/last; one open attempt at a time | S, I | `startAttempt`, `gradedResult` | attempts.attempt_number (unique per quiz+student), partial unique index, triggers | db (second attempt refused at max 1), unit | **Built, in QA** (4.4) | Average is stored to 2 decimals. No per-student extra attempts (overrides) |
+| Random slots: N questions from a bank category, drawn per attempt | S, I | `chooseQuestions`, `writeQuizContent` | quiz_slots, questions.slot_id | unit | **Built, in QA** (4.4) | Pool copied when the quiz is saved; least-used questions preferred, but different picks are not guaranteed |
 | Per-student question and option shuffling | S | `buildLayout` | attempts.layout | e2e | **Verified** | — |
 | Answer-key protection (until deadline plus grace) | S | `getStudentQuiz` | — | e2e | **Verified** | Review policy is fixed, not configurable |
 | Transactional answers and finalisation; frozen questions | S, I | locks + triggers | — | db (concurrent) | **Verified** | — |
 | Analytics (distribution, per-question picks) and CSV export | I | `/instructor/quizzes/[id]` | — | e2e (export) | **Verified** | — |
-| Question bank, categories, tags, random selection | — | — | questions belong to one quiz | — | **Missing** | Phase 3 |
+| Question bank: per-course categories and tags, filters; copy from same-department courses | I (manage), TA (view) | `/instructor/courses/[id]/bank`, `actions/question-bank.ts`, `data/question-bank.ts` | question_categories, bank_questions | dev smoke only | **Built, in QA** (4.4) | Quizzes hold copies (snapshot): bank edits don't reach a saved quiz unless it is re-saved before anyone starts. No import/export (GIFT, Moodle XML), no question versioning |
 | Manual grading, negative marking | — | — | — | — | **Missing** | Phase 3 |
 | AI-drafted questions (Ollama) | I | `aiDraftQuestions` | — | — | **Implemented**, off by default | Prompt said "school students" (fixed in Phase 0). Not re-tested against a model |
 

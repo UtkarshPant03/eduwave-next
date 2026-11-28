@@ -1,5 +1,37 @@
 # Changelog
 
+## 4.4.0: Phase 3, question bank, question types and attempts (2026-11-28, built, in QA)
+
+**Database (migration `0005_question_bank`, additive)**
+- New tables: `question_categories`, `bank_questions`, `quiz_slots`. New enums `question_type` and `grading_method`.
+- New columns with defaults that keep today's behaviour: questions get a type (single choice) and points (1); quizzes get an optional opening time, a maximum number of attempts (1) and a grading method (highest); attempts get an attempt number (1); answers get columns for multiple-answer, short-answer and numerical responses.
+- **Rules in the database:** each question type's answer key must be complete and in range (CHECK on quiz and bank questions); exactly one response per answer; an answer must be for a question the attempt was given; attempt numbers stay within the quiz's maximum and can't start before it opens; the maximum can't drop below an attempt already made; random slots are frozen with the questions once anyone starts; one open attempt per student per quiz.
+- Existing quizzes, attempts and answers keep their scores (verified on PGlite by upgrading a 0004 database with a scored attempt). Plan and rollback: `DATABASE.md`.
+
+**Question bank** (course page → Question bank)
+- Per-course categories and questions with free-text tags; filter by category, type, tag or words in the question.
+- Staff with `course.manage` create, edit and delete; teaching assistants see it read-only.
+- **Department sharing:** staff who manage a course can browse the banks of other courses in the same department and **copy** questions into their own bank. Courses in other departments, and courses with no department, are never listed or reachable (the page and the copy action both 404).
+- **Snapshots, not links:** a quiz always holds its own copy of a question. Editing or deleting a bank question never changes a quiz or a score. To pick up bank edits, re-save the quiz before anyone starts.
+
+**Question types** (all graded on the server)
+- Single choice (as before), multiple answer (all-or-nothing, stated in the builder and to students), true/false, short answer (one or more accepted answers; trimmed, case-insensitive, whitespace collapsed, otherwise exact), numerical (value ± tolerance, inclusive).
+- Each question has points (whole number 1–100, default 1); the attempt total is the sum.
+
+**Quizzes**
+- Fixed questions (typed in, drafted with AI, or added from the bank) and **random slots**: "N questions from category X, P points each". Each attempt draws its own picks when it starts, preferring the pool questions given least often so far, so students who start one after another get different questions when the category is big enough. N can't exceed the category's size.
+- Optional **opening time** (enforced on the server and in the database; students see when it opens).
+- **Multiple attempts** (1–10, default 1) with a grading method: highest, average (2 decimals), first or last. The gradebook, course totals, analytics, the quiz CSV and the student's page all use the value that counts. Each attempt has its own timer, layout and picks. Policy is a per-quiz choice; no university rule is assumed.
+- Answer keys (correct options, accepted answers, numerical values and tolerances) are still sent to students only after the deadline.
+- Analytics show per-type breakdowns (option counts, most common typed answers); the CSV has one row per student with the graded score and every attempt's score.
+
+**Fixes found while building**
+- Course progress counted each attempt; it now counts each quiz once.
+
+**Tests**
+- New `tests/unit/questions.test.ts` (14 checks: answer checking per type, scoring, grading methods, validation, random picks). `test:unit` goes to 43.
+- No new browser suite yet (QA in progress). `test:db` (36), `test:e2e` (42) and `test:stability` (15) pass unchanged.
+
 ## 4.3.0: Phase 3, attendance (2026-11-27)
 
 **Database (migration `0004_attendance`, additive)**

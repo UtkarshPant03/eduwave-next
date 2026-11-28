@@ -143,20 +143,21 @@ Your differentiator might be one well-chosen Advanced feature done properly, not
 
 | ID | Feature | Tier | Status | Acceptance criteria |
 |---|---|---|---|---|
-| QZ-01 | Multiple-choice quiz builder | Core | ✅ | 2–6 options, one correct, optional explanation; reorder/duplicate questions. |
+| QZ-01 | Multiple-choice quiz builder | Core | ✅ | 2–6 options, one correct, optional explanation; reorder/duplicate questions. Points per question (default 1). |
 | QZ-02 | Server-side timer | Core | ✅ | Start time recorded by the server; changing the browser clock gives no extra time. |
 | QZ-03 | Server-side grading | Core | ✅ | Client sends only answers; score computed on the server. |
 | QZ-04 | Answer key protection | Core | ✅ | Correct answers **never** sent to the browser before the student submits **and** the deadline passes. |
-| QZ-05 | One attempt per student | Core | ✅ | Enforced by a unique DB constraint (safe against double-clicks/races). |
+| QZ-05 | One attempt per student | Core | ✅ | Enforced by a unique DB constraint (safe against double-clicks/races). Since 4.4 this is the default of a per-quiz limit (QZ-15). |
 | QZ-06 | Autosave each answer | Standard | ✅ | Reloading or losing connection keeps answers; auto-submit at zero. |
 | QZ-07 | Per-student shuffling | Standard | ✅ | Question and option order shuffled per attempt; client sends display positions, server maps back. |
 | QZ-08 | Results & explanations after deadline | Standard | ✅ | |
 | QZ-09 | Quiz analytics | Standard | ✅ | Score distribution, per-question correct %, per-option pick counts, CSV export. |
 | QZ-10 | AI-drafted questions (local model) | Advanced | ✅ | Drafts only; instructor reviews before publishing; rate-limited. |
-| QZ-11 | Question bank & random selection | Advanced | ⬜ | |
-| QZ-12 | Other question types (short answer, numeric, code) | Advanced | ⬜ | |
+| QZ-11 | Question bank & random selection | Advanced | 🟡 built, in QA (4.4) | Per-course bank with categories and tags; copy (never link) from other courses of the same department, other departments never visible; "random N from category X" drawn per attempt; N can't exceed the category. |
+| QZ-12 | Other question types (short answer, numeric, code) | Advanced | 🟡 built, in QA (4.4) | Multiple answer (all-or-nothing), true/false, short answer (trimmed, case-insensitive), numerical (± tolerance), all graded on the server. Code questions not built. |
 | QZ-13 | Accommodations (extra time per student) | Advanced | ⬜ | |
 | QZ-14 | Edit quiz with fairness locks | Standard | ✅ | Everything editable until the first attempt; then questions and time limit lock; a passed deadline can't be reopened (answers are already visible). Quizzes with attempts can't be deleted. |
+| QZ-15 | Open date, multiple attempts, grading method | Standard | 🟡 built, in QA (4.4) | Students can't start before the open date (server + DB). 1–10 attempts, each with its own timer and questions; highest/average/first/last counts in the gradebook, analytics, CSV and the student's page. |
 
 ### 3.6 Grades (`GRD`)
 
@@ -273,10 +274,12 @@ sections(id, course_id → courses, position, title)
 resources(id, course_id, section_id?, title, url? | file_id?)
 assignments(id, course_id, section_id?, title, instructions, due_at, max_points, late_days)
 submissions(id, assignment_id, student_id, text?, file_id?, submitted_at, grade?, feedback?)  unique(assignment_id, student_id)
-quizzes(id, course_id, section_id?, title, time_limit, deadline, shuffle)
-questions(id, quiz_id, position, prompt, options[], correct_index)
-attempts(id, quiz_id, student_id, started_at, submitted_at?, score?, layout)                  unique(quiz_id, student_id)
-answers(attempt_id, question_id, selected_index)                                             pk(attempt_id, question_id)
+quizzes(id, course_id, section_id?, title, time_limit, deadline, opens_at?, shuffle, max_attempts, grading_method)
+questions(id, quiz_id, position, type, prompt, options[], answer key by type, points, slot_id?)
+quiz_slots(id, quiz_id, position, category, pick_count, points)                              "random N from category"
+question_categories(id, course_id, name);  bank_questions(id, course_id, category_id, ..., tags[])
+attempts(id, quiz_id, student_id, attempt_number, started_at, submitted_at?, score?, layout)  unique(quiz_id, student_id, attempt_number)
+answers(attempt_id, question_id, selected_index? | selected_indexes? | text? | number?)       pk(attempt_id, question_id)
 threads(id, course_id, author_id, title, body, is_announcement, pinned, locked)
 posts(id, thread_id, author_id, body)
 notifications(id, user_id, title, body, link, read_at)
@@ -327,6 +330,7 @@ Add a row whenever a feature's status changes. Newest first.
 
 | Date | Version | Change | Feature IDs |
 |---|---|---|---|
+| 2026-11-28 | 4.4 | Question bank (categories, tags, department sharing by copy), question types and points, random slots, open date, multiple attempts with grading method. Built, in QA (see docs/CHANGELOG.md) | QZ-11, QZ-12, QZ-15 |
 | 2026-11-27 | 4.3 | Attendance: class sessions, sheets, percentages, configurable minimum, correction requests with approval, append-only history, CSV (see docs/CHANGELOG.md) | SCH-05 |
 | 2026-11-27 | 4.0 | Production hardening: audit, security fixes, database-enforced integrity, transactional quizzes and grading, grade history, production configuration checks, institutional redesign, CI (see docs/CHANGELOG.md) | ADM-12, UI-05, UI-10 |
 | 2026-11-27 | 3.2 | Verified backup & restore scripts; accessibility scan in light/dark with all WCAG 2.1 A/AA violations fixed (contrast, accessible names, nested controls) | ADM-12, UI-05 |
