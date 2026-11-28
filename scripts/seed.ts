@@ -15,7 +15,7 @@
  */
 import bcrypt from "bcryptjs";
 import { randomBytes } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db, schema } from "../src/db";
 import { deploymentMode } from "../src/lib/env";
 import { SAMPLE_PASSWORD } from "../src/lib/sample-data";
@@ -401,6 +401,30 @@ async function main() {
       { ...copyOf(bankRows[6]), quizId: q4.id, position: 1 },
     ]);
 
+    // Gradebook (4.6): CS201 uses weighted categories. The names and weights are SAMPLE
+    // DATA to show the feature, not a university grading scheme (decision D4 is open).
+    const [labsCat, quizzesCat] = await tx
+      .insert(schema.gradeCategories)
+      .values([
+        { courseId: ds.id, name: "Labs (sample)", weight: 60, position: 0 },
+        { courseId: ds.id, name: "Quizzes (sample)", weight: 40, position: 1 },
+      ])
+      .returning();
+    await tx.update(schema.assignments).set({ gradeCategoryId: labsCat.id }).where(inArray(schema.assignments.id, [a1.id, a2.id, a3.id]));
+    await tx.update(schema.quizzes).set({ gradeCategoryId: quizzesCat.id }).where(inArray(schema.quizzes.id, [q1.id, q3.id, q4.id]));
+    await tx.update(schema.courses).set({ gradeTotalMethod: "weighted" }).where(eq(schema.courses.id, ds.id));
+    // Lab 4 is being marked: its grades aren't released to students yet.
+    await tx.update(schema.assignments).set({ gradesReleased: false }).where(eq(schema.assignments.id, a2.id));
+    // One overridden grade, with its reason (the history row is written by a trigger).
+    await tx.insert(schema.gradeOverrides).values({
+      courseId: ds.id,
+      studentId: students[2].id,
+      quizId: q1.id,
+      points: 5,
+      reason: "Sample data: question 4 was worded ambiguously, so both readings were accepted on review.",
+      setBy: meera.id,
+    });
+
     // Live classes.
     await tx.insert(schema.liveSessions).values([
       { courseId: ds.id, sectionId: sec[ds.id][4].id, title: "Doubt-clearing: hashing", startsAt: at(2, 16, 0), durationMinutes: 60, room: room() },
@@ -434,7 +458,7 @@ async function main() {
     );
   });
 
-  console.log("Seeded: 1 admin, 3 instructors + 1 teaching assistant, 12 students in sections A/B, 4 courses with sections, materials, assignments, quizzes (CS201: question bank, a random-question quiz with 2 attempts, a quiz that opens later; Lab 2 takes 3 files, with a resubmitted version and a feedback file), live classes and discussions.");
+  console.log("Seeded: 1 admin, 3 instructors + 1 teaching assistant, 12 students in sections A/B, 4 courses with sections, materials, assignments, quizzes (CS201: question bank, a random-question quiz with 2 attempts, a quiz that opens later; Lab 2 takes 3 files, with a resubmitted version and a feedback file; sample weighted gradebook categories, one override, Lab 4 grades not released), live classes and discussions.");
 }
 
 main()
