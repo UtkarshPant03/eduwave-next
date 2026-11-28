@@ -247,8 +247,163 @@ async function main() {
     /duplicate|unique/i,
   );
 
+  // ---- question bank, question types, attempts (migration 0005) ------------------------
+  const [catA] = await db.insert(schema.questionCategories).values({ courseId: courseA.id, name: "Trees" }).returning();
+  const [catB] = await db.insert(schema.questionCategories).values({ courseId: courseB.id, name: "Trees" }).returning();
+  const bankBase = { courseId: courseA.id, categoryId: catA.id, prompt: "p", createdBy: instructor.id };
+  await expectReject(
+    "a bank question can't use a category of ANOTHER course",
+    (tx) => tx.insert(schema.bankQuestions).values({ ...bankBase, categoryId: catB.id, type: "single", options: ["a", "b"], correctIndex: 0 }),
+    /foreign key|same_course/i,
+  );
+  await expectReject("category names are unique per course", (tx) => tx.insert(schema.questionCategories).values({ courseId: courseA.id, name: "Trees" }), /duplicate|unique/i);
+  const badShapes: [string, Partial<typeof schema.bankQuestions.$inferInsert>][] = [
+    ["single choice with the answer out of range", { type: "single", options: ["a", "b"], correctIndex: 2 }],
+    ["single choice with 7 options", { type: "single", options: ["a", "b", "c", "d", "e", "f", "g"], correctIndex: 0 }],
+    ["true/false with 3 options", { type: "true_false", options: ["T", "F", "?"], correctIndex: 0 }],
+    ["multiple answer with no correct option", { type: "multiple", options: ["a", "b"], correctIndexes: [] }],
+    ["multiple answer with an option out of range", { type: "multiple", options: ["a", "b"], correctIndexes: [0, 2] }],
+    ["short answer without accepted answers", { type: "short_answer", options: [], acceptedAnswers: [] }],
+    ["short answer with options", { type: "short_answer", options: ["a"], acceptedAnswers: ["a"] }],
+    ["numerical without a value", { type: "numerical", options: [], tolerance: 0 }],
+    ["numerical with a negative tolerance", { type: "numerical", options: [], numericAnswer: 1, tolerance: -1 }],
+    ["zero points", { type: "single", options: ["a", "b"], correctIndex: 0, points: 0 }],
+  ];
+  for (const [label, shape] of badShapes) {
+    await expectReject(`bank question refused: ${label}`, (tx) => tx.insert(schema.bankQuestions).values({ ...bankBase, options: [], ...shape }), /check/i);
+  }
+  const [bq1] = await db.insert(schema.bankQuestions).values({ ...bankBase, type: "numerical", options: [], numericAnswer: 2, tolerance: 0.5 }).returning();
+  check("a valid numerical bank question is accepted", Boolean(bq1));
+  await expectReject("a category holding questions can't be deleted", (tx) => tx.delete(schema.questionCategories).where(eq(schema.questionCategories.id, catA.id)), /foreign key|violates/i);
+
+  const soon = new Date(Date.now() + 3_600_000);
+  const later = new Date(Date.now() + 86_400_000);
+  await expectReject(
+    "a quiz can't open after its deadline",
+    (tx) => tx.insert(schema.quizzes).values({ courseId: courseA.id, title: "x", timeLimitMinutes: 5, deadline: soon, opensAt: later }),
+    /check|opens/i,
+  );
+  await expectReject(
+    "more than 10 attempts refused",
+    (tx) => tx.insert(schema.quizzes).values({ courseId: courseA.id, title: "x", timeLimitMinutes: 5, deadline: later, maxAttempts: 11 }),
+    /check|attempts/i,
+  );
+  const [multi, notYet] = await db
+    .insert(schema.quizzes)
+    .values([
+      { courseId: courseA.id, title: "Multi", timeLimitMinutes: 10, deadline: later, maxAttempts: 2 },
+      { courseId: courseA.id, title: "Later", timeLimitMinutes: 10, deadline: later, opensAt: soon },
+    ])
+    .returning();
+  const [slotM] = await db.insert(schema.quizSlots).values({ quizId: multi.id, position: 1, categoryId: catA.id, categoryName: "Trees", pickCount: 1, points: 2 }).returning();
+  const [mq1, mq2, mqText, mqPool, mqOut] = await db
+    .insert(schema.questions)
+    .values([
+      { quizId: multi.id, position: 0, type: "multiple", prompt: "m", options: ["a", "b", "c"], correctIndexes: [0, 2], points: 2 },
+      { quizId: multi.id, position: 2, type: "true_false", prompt: "tf", options: ["True", "False"], correctIndex: 1 },
+      { quizId: multi.id, position: 3, type: "short_answer", prompt: "s", options: [], acceptedAnswers: ["Stack"] },
+      { quizId: multi.id, position: 1, slotId: slotM.id, type: "numerical", prompt: "n", options: [], numericAnswer: 2, tolerance: 0.5, points: 2 },
+      // A second pool question that this student's attempts are NOT given.
+      { quizId: multi.id, position: 1, slotId: slotM.id, type: "numerical", prompt: "n2", options: [], numericAnswer: 3, tolerance: 0, points: 2 },
+    ])
+    .returning();
+  await expectReject(
+    "a question can't belong to a random slot of ANOTHER quiz",
+    (tx) => tx.insert(schema.questions).values({ quizId: quiz2.id, position: 9, slotId: slotM.id, type: "true_false", prompt: "x", options: ["True", "False"], correctIndex: 0 }),
+    /foreign key|same_quiz/i,
+  );
+  await expectReject(
+    "a student can't start before the quiz opens",
+    (tx) => tx.insert(schema.attempts).values({ quizId: notYet.id, studentId: student.id, total: 1 }),
+    /not opened/i,
+  );
+  const layout = { questionOrder: [mq1.id, mqPool.id, mq2.id, mqText.id], optionOrders: { [mq1.id]: [2, 0, 1], [mqPool.id]: [], [mq2.id]: [0, 1], [mqText.id]: [] } };
+  const [m1] = await db.insert(schema.attempts).values({ quizId: multi.id, studentId: student.id, attemptNumber: 1, total: 6, layout }).returning();
+  await expectReject(
+    "only one open attempt per student per quiz",
+    (tx) => tx.insert(schema.attempts).values({ quizId: multi.id, studentId: student.id, attemptNumber: 2, total: 6, layout }),
+    /duplicate|unique/i,
+  );
+  await expectReject(
+    "random slots are frozen once a student has started",
+    (tx) => tx.update(schema.quizSlots).set({ pickCount: 2 }).where(eq(schema.quizSlots.id, slotM.id)),
+    /cannot change after students/i,
+  );
+  await expectReject(
+    "an answer needs exactly one kind of response",
+    (tx) => tx.insert(schema.answers).values({ attemptId: m1.id, quizId: multi.id, questionId: mq2.id, selectedIndex: 0, textAnswer: "True" }),
+    /check|one_response/i,
+  );
+  await expectReject(
+    "an empty answer row is refused",
+    (tx) => tx.insert(schema.answers).values({ attemptId: m1.id, quizId: multi.id, questionId: mq2.id }),
+    /check|one_response/i,
+  );
+  await expectReject(
+    "multiple-answer picks out of range refused",
+    (tx) => tx.insert(schema.answers).values({ attemptId: m1.id, quizId: multi.id, questionId: mq1.id, selectedIndexes: [0, 6] }),
+    /check|selected_indexes/i,
+  );
+  await expectReject(
+    "an over-long text answer is refused",
+    (tx) => tx.insert(schema.answers).values({ attemptId: m1.id, quizId: multi.id, questionId: mqText.id, textAnswer: "x".repeat(501) }),
+    /check|text_length/i,
+  );
+  await expectReject(
+    "an answer's kind must match its question's type (text for a true/false question)",
+    (tx) => tx.insert(schema.answers).values({ attemptId: m1.id, quizId: multi.id, questionId: mq2.id, textAnswer: "False" }),
+    /check|type|kind/i,
+  );
+  // Correct answers on every given question, then grading on the server: 2 + 2 + 1 + 1 = 6.
+  await db.insert(schema.answers).values([
+    { attemptId: m1.id, quizId: multi.id, questionId: mq1.id, selectedIndexes: [0, 2] },
+    { attemptId: m1.id, quizId: multi.id, questionId: mqPool.id, numberAnswer: 2.5 },
+    { attemptId: m1.id, quizId: multi.id, questionId: mq2.id, selectedIndex: 1 },
+    { attemptId: m1.id, quizId: multi.id, questionId: mqText.id, textAnswer: "  stack " },
+  ]);
+  await Promise.all([finalizeAttempt(m1.id), finalizeAttempt(m1.id)]);
+  const [m1done] = await db.select().from(schema.attempts).where(eq(schema.attempts.id, m1.id));
+  check("server grading of every type with points: 6 / 6 (double finalise is idempotent)", m1done.score === 6 && m1done.total === 6, `score ${m1done.score}/${m1done.total}`);
+  // Two concurrent starts of attempt 2: exactly one row.
+  const start2 = () =>
+    db
+      .insert(schema.attempts)
+      .values({ quizId: multi.id, studentId: student.id, attemptNumber: 2, total: 6, layout })
+      .onConflictDoNothing()
+      .returning();
+  const starts = await Promise.all([start2(), start2(), start2()]);
+  check("concurrent starts of the same attempt create exactly one", starts.flat().length === 1, `${starts.flat().length} created`);
+  const [m2] = starts.flat();
+  await expectReject(
+    "an answer to a question the attempt wasn't given is refused",
+    (tx) => tx.insert(schema.answers).values({ attemptId: m2.id, quizId: multi.id, questionId: mqOut.id, numberAnswer: 3 }),
+    /not part of the attempt/i,
+  );
+  const otherLayout = { questionOrder: [mq1.id, mqOut.id, mq2.id, mqText.id], optionOrders: {} };
+  await db.update(schema.attempts).set({ submittedAt: new Date(), score: 0 }).where(eq(schema.attempts.id, m2.id));
+  await expectReject(
+    "attempt number above the quiz's maximum refused",
+    (tx) => tx.insert(schema.attempts).values({ quizId: multi.id, studentId: student.id, attemptNumber: 3, total: 5, layout: otherLayout }),
+    /exceeds the maximum/i,
+  );
+  await expectReject(
+    "an attempt can't be renumbered above the maximum afterwards",
+    (tx) => tx.update(schema.attempts).set({ attemptNumber: 5 }).where(eq(schema.attempts.id, m2.id)),
+    /exceeds the maximum|check/i,
+  );
+  await expectReject(
+    "max attempts can't drop below an attempt already made",
+    (tx) => tx.update(schema.quizzes).set({ maxAttempts: 1 }).where(eq(schema.quizzes.id, multi.id)),
+    /below an attempt/i,
+  );
+  const [pool2] = await db.select().from(schema.questions).where(eq(schema.questions.id, mqPool.id));
+  check("pool question is still the snapshot after the bank changes", pool2.numericAnswer === 2);
+  await db.update(schema.bankQuestions).set({ numericAnswer: 99 }).where(eq(schema.bankQuestions.id, bq1.id));
+  const [pool3] = await db.select().from(schema.questions).where(eq(schema.questions.id, mqPool.id));
+  check("editing a bank question never changes a quiz copy", pool3.numericAnswer === 2);
+
   // ---- history ---------------------------------------------------------------------
-  const [ev] = await db.insert(schema.auditLog).values({ userId: student.id, action: "login" }).returning();
+  const [ev] =await db.insert(schema.auditLog).values({ userId: student.id, action: "login" }).returning();
   await expectReject("audit log rows can't be edited", (tx) => tx.update(schema.auditLog).set({ action: "x" }).where(eq(schema.auditLog.id, ev.id)), /append-only/i);
   await expectReject("audit log rows can't be deleted", (tx) => tx.delete(schema.auditLog).where(eq(schema.auditLog.id, ev.id)), /append-only/i);
   await expectReject("users with academic records can't be deleted", (tx) => tx.delete(schema.users).where(eq(schema.users.id, student.id)), /foreign key|violates|append-only/i);
