@@ -34,7 +34,8 @@ export type GradeCell = { earned: number | null; possible: number; counted: bool
 export function courseTotal(cells: GradeCell[]) {
   const counted = cells.filter((c) => c.counted);
   const possible = counted.reduce((s, c) => s + c.possible, 0);
-  const earned = counted.reduce((s, c) => s + (c.earned ?? 0), 0);
+  // Rounded to 2 decimals: averaged quiz attempts can make float sums like 37.330000001.
+  const earned = Math.round(counted.reduce((s, c) => s + (c.earned ?? 0), 0) * 100) / 100;
   const percent = possible > 0 ? (earned / possible) * 100 : null;
   // Rounding policy: the letter follows the whole-number percentage that is DISPLAYED
   // (half up), so a student never sees "90%" next to a grade band that starts at 90.

@@ -3,15 +3,17 @@
  * computed the score and the server trusted it.
  *
  * - The server records when an attempt starts; the timer is derived from that.
+ * - Random-slot picks and the presentation order are fixed when the attempt starts.
  * - Answers are saved one at a time and rejected once time is up.
- * - Grading compares stored answers with stored correct answers, in SQL.
+ * - Grading compares stored answers with stored answer keys, on the server.
  * - Finalising is idempotent: submit, expiry and page loads can all call it safely.
  */
 import "server-only";
 import { randomInt } from "node:crypto";
-import { and, count, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { AttemptLayout } from "@/db/schema";
+import { scoreAttempt, type QuestionType, type Response } from "@/lib/questions";
 
 function shuffled<T>(items: T[]): T[] {
   const a = [...items];
@@ -22,15 +24,38 @@ function shuffled<T>(items: T[]): T[] {
   return a;
 }
 
-/** Fixes the question and option order for one attempt (identity order if shuffle is off). */
-export function buildLayout(qs: { id: string; options: string[] }[], shuffle: boolean): AttemptLayout {
+/**
+ * Fixes the question and option order for one attempt (identity order if shuffle is off).
+ * True/false options always stay "True, False".
+ */
+export function buildLayout(qs: { id: string; options: string[]; type?: QuestionType }[], shuffle: boolean): AttemptLayout {
   const order = (n: number) => Array.from({ length: n }, (_, i) => i);
   return {
     questionOrder: shuffle ? shuffled(qs.map((q) => q.id)) : qs.map((q) => q.id),
     optionOrders: Object.fromEntries(
-      qs.map((q) => [q.id, shuffle ? shuffled(order(q.options.length)) : order(q.options.length)]),
+      qs.map((q) => [q.id, shuffle && q.type !== "true_false" ? shuffled(order(q.options.length)) : order(q.options.length)]),
     ),
   };
+}
+
+type PoolQuestion = { id: string; position: number; slotId: string | null };
+type Slot = { id: string; position: number; pickCount: number };
+
+/**
+ * Chooses the questions for a new attempt: every fixed question, plus `pickCount` questions
+ * from each random slot's pool. Pool questions given least often so far (`usage`) are
+ * preferred, ties broken at random, so students who start one after another get different
+ * picks whenever the pool has enough questions. Returned in quiz order (slots in place).
+ */
+export function chooseQuestions<Q extends PoolQuestion>(questions: Q[], slots: Slot[], usage: Map<string, number> = new Map()): Q[] {
+  const items: { position: number; picks: Q[] }[] = questions.filter((q) => !q.slotId).map((q) => ({ position: q.position, picks: [q] }));
+  for (const slot of slots) {
+    const pool = shuffled(questions.filter((q) => q.slotId === slot.id));
+    // Stable sort after a random shuffle = random tie-break among equally used questions.
+    pool.sort((a, b) => (usage.get(a.id) ?? 0) - (usage.get(b.id) ?? 0));
+    items.push({ position: slot.position, picks: pool.slice(0, slot.pickCount) });
+  }
+  return items.sort((a, b) => a.position - b.position).flatMap((i) => i.picks);
 }
 
 /** Network latency allowance for the last answer and the auto-submit. */
@@ -49,6 +74,11 @@ export function isAttemptOpen(attempt: AttemptTiming, quiz: QuizTiming, now = Da
   return now <= attemptEndsAt(attempt, quiz).getTime() + GRACE_MS;
 }
 
+/** The questions an attempt was given: its layout, or (pre-4.0 attempts) every fixed question. */
+export function givenQuestionIds(layout: AttemptLayout | null | undefined, questions: { id: string; slotId: string | null }[]): string[] {
+  return layout ? layout.questionOrder : questions.filter((q) => !q.slotId).map((q) => q.id);
+}
+
 /**
  * Grades and closes an attempt. Does nothing if it was already submitted.
  *
@@ -62,21 +92,40 @@ export function isAttemptOpen(attempt: AttemptTiming, quiz: QuizTiming, now = Da
 export async function finalizeAttempt(attemptId: string, endedAt?: Date) {
   await db.transaction(async (tx) => {
     const [attempt] = await tx
-      .select({ id: schema.attempts.id, submittedAt: schema.attempts.submittedAt })
+      .select({ id: schema.attempts.id, quizId: schema.attempts.quizId, submittedAt: schema.attempts.submittedAt, layout: schema.attempts.layout })
       .from(schema.attempts)
       .where(eq(schema.attempts.id, attemptId))
       .for("update");
     if (!attempt || attempt.submittedAt) return;
 
-    const [{ correct }] = await tx
-      .select({ correct: count() })
-      .from(schema.answers)
-      .innerJoin(schema.questions, eq(schema.answers.questionId, schema.questions.id))
-      .where(and(eq(schema.answers.attemptId, attemptId), eq(schema.answers.selectedIndex, schema.questions.correctIndex)));
+    const q = schema.questions;
+    const qs = await tx
+      .select({
+        id: q.id,
+        slotId: q.slotId,
+        type: q.type,
+        points: q.points,
+        correctIndex: q.correctIndex,
+        correctIndexes: q.correctIndexes,
+        acceptedAnswers: q.acceptedAnswers,
+        numericAnswer: q.numericAnswer,
+        tolerance: q.tolerance,
+      })
+      .from(q)
+      .where(eq(q.quizId, attempt.quizId));
+    const a = schema.answers;
+    const saved = await tx
+      .select({ questionId: a.questionId, selectedIndex: a.selectedIndex, selectedIndexes: a.selectedIndexes, textAnswer: a.textAnswer, numberAnswer: a.numberAnswer })
+      .from(a)
+      .where(eq(a.attemptId, attemptId));
+
+    const given = new Set(givenQuestionIds(attempt.layout, qs));
+    const answers = new Map<string, Response>(saved.map((s) => [s.questionId, s]));
+    const score = scoreAttempt(qs.filter((x) => given.has(x.id)), answers);
 
     await tx
       .update(schema.attempts)
-      .set({ submittedAt: endedAt ?? sql`now()`, score: correct })
+      .set({ submittedAt: endedAt ?? sql`now()`, score })
       .where(and(eq(schema.attempts.id, attemptId), isNull(schema.attempts.submittedAt)));
   });
 }
@@ -115,4 +164,26 @@ export async function finalizeExpiredAttempts(scope: { quizId: string } | { cour
       ),
     );
   for (const row of expired) await finalizeAttempt(row.id, attemptEndsAt(row, row));
+}
+
+/** Points possible per quiz: fixed questions' points + each random slot's picks × points. */
+export async function quizPossible(quizIds: string[]): Promise<Map<string, number>> {
+  const result = new Map<string, number>(quizIds.map((id) => [id, 0]));
+  if (quizIds.length === 0) return result;
+  const q = schema.questions;
+  const s = schema.quizSlots;
+  const [fixed, slots] = await Promise.all([
+    db
+      .select({ quizId: q.quizId, n: sql<number>`coalesce(sum(${q.points}), 0)`.mapWith(Number) })
+      .from(q)
+      .where(and(inArray(q.quizId, quizIds), isNull(q.slotId)))
+      .groupBy(q.quizId),
+    db
+      .select({ quizId: s.quizId, n: sql<number>`coalesce(sum(${s.pickCount} * ${s.points}), 0)`.mapWith(Number) })
+      .from(s)
+      .where(inArray(s.quizId, quizIds))
+      .groupBy(s.quizId),
+  ]);
+  for (const r of [...fixed, ...slots]) result.set(r.quizId, (result.get(r.quizId) ?? 0) + r.n);
+  return result;
 }
