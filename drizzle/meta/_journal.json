@@ -50,6 +50,13 @@
       "when": 1795877921895,
       "tag": "0006_assignment_versions",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795879256877,
+      "tag": "0007_gradebook",
+      "breakpoints": true
     }
   ]
 }

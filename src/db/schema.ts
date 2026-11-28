@@ -235,6 +235,9 @@ export const roleAssignments = pgTable(
 
 /* ============================== courses ============================== */
 
+/** How a course total is calculated (4.6). `points` = the pre-4.6 calculation. */
+export const gradeTotalMethodEnum = pgEnum("grade_total_method", ["points", "weighted"]);
+
 export const courses = pgTable(
   "courses",
   {
@@ -257,6 +260,8 @@ export const courses = pgTable(
     // department/term until an admin links them; migration 0003 links departments).
     departmentId: uuid().references(() => departments.id, { onDelete: "restrict" }),
     termId: uuid().references(() => terms.id, { onDelete: "restrict" }),
+    // Course total: sum of points (default) or weighted categories (see src/lib/grading.ts).
+    gradeTotalMethod: gradeTotalMethodEnum().notNull().default("points"),
     createdAt: createdAt(),
   },
   (t) => [
@@ -393,6 +398,59 @@ export const resources = pgTable(
   ],
 );
 
+/* ============================== gradebook ============================== */
+/*
+ * Phase 3 (4.6). Grading policy is data, never code (decision D4 is open): each course
+ * chooses its total method, its categories and weights, and its grade scale. The defaults
+ * reproduce the pre-4.6 behaviour exactly. See docs/DATABASE.md ("Plan for 0007").
+ */
+
+/** Weighted-total categories of a course (names and weights are the course's own choice). */
+export const gradeCategories = pgTable(
+  "grade_categories",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    courseId: courseRef(),
+    name: text().notNull(),
+    // Percent of the course total (0–100). In weighted mode the course's weights total 100.
+    weight: doublePrecision().notNull().default(0),
+    position: integer().notNull().default(0),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique().on(t.courseId, t.name),
+    unique("grade_categories_id_course_unique").on(t.id, t.courseId),
+    check("grade_categories_weight_check", sql`${t.weight} >= 0 and ${t.weight} <= 100`),
+    check("grade_categories_name_check", sql`length(btrim(${t.name})) between 1 and 60`),
+  ],
+);
+
+const gradeCategoryRef = () => uuid().references(() => gradeCategories.id, { onDelete: "set null" });
+/** Keeps an item's grade category inside the item's own course (same pattern as sections). */
+const sameCourseCategory = (name: string, t: { gradeCategoryId: AnyPgColumn; courseId: AnyPgColumn }) =>
+  foreignKey({ name, columns: [t.gradeCategoryId, t.courseId], foreignColumns: [gradeCategories.id, gradeCategories.courseId] });
+
+/** A course's grade scale as data (each course gets the default 10-point scale on creation). */
+export const gradeBands = pgTable(
+  "grade_bands",
+  {
+    courseId: courseRef(),
+    letter: text().notNull(),
+    label: text().notNull(),
+    // The band applies from this whole-number percentage up (the displayed percentage).
+    minPercent: integer().notNull(),
+    // Grade points for this band (used for the provisional GPA).
+    points: doublePrecision().notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.courseId, t.letter] }),
+    check("grade_bands_min_check", sql`${t.minPercent} between 0 and 100`),
+    check("grade_bands_points_check", sql`${t.points} >= 0 and ${t.points} <= 100`),
+    check("grade_bands_letter_check", sql`length(btrim(${t.letter})) between 1 and 8`),
+    check("grade_bands_label_check", sql`length(${t.label}) <= 40`),
+  ],
+);
+
 export const assignments = pgTable(
   "assignments",
   {
@@ -407,12 +465,18 @@ export const assignments = pgTable(
     lateDays: integer().notNull().default(0),
     // Files a student may attach to one submission (1 = the pre-4.5 behaviour).
     maxFiles: integer().notNull().default(1),
+    // Gradebook category (4.6); required while the course uses weighted categories.
+    gradeCategoryId: gradeCategoryRef(),
+    // false = grades and feedback are hidden from students (true = the pre-4.6 behaviour).
+    gradesReleased: boolean().notNull().default(true),
     createdAt: createdAt(),
   },
   (t) => [
     index().on(t.courseId, t.dueAt),
     index().on(t.sectionId),
     sameCourseSection("assignments_section_same_course_fk", t),
+    sameCourseCategory("assignments_grade_category_same_course_fk", t),
+    unique("assignments_id_course_unique").on(t.id, t.courseId),
     check("assignments_points_check", sql`${t.maxPoints} > 0 and ${t.lateDays} >= 0`),
     check("assignments_max_files_check", sql`${t.maxFiles} between 1 and 20`),
   ],
@@ -626,12 +690,17 @@ export const quizzes = pgTable(
     maxAttempts: integer().notNull().default(1),
     // Which attempt counts in the gradebook when there are several.
     gradingMethod: gradingMethodEnum().notNull().default("highest"),
+    // Gradebook category and release (4.6), as for assignments.
+    gradeCategoryId: gradeCategoryRef(),
+    gradesReleased: boolean().notNull().default(true),
     createdAt: createdAt(),
   },
   (t) => [
     index().on(t.courseId, t.deadline),
     index().on(t.sectionId),
     sameCourseSection("quizzes_section_same_course_fk", t),
+    sameCourseCategory("quizzes_grade_category_same_course_fk", t),
+    unique("quizzes_id_course_unique").on(t.id, t.courseId),
     check("quizzes_time_limit_check", sql`${t.timeLimitMinutes} > 0`),
     check("quizzes_attempts_check", sql`${t.maxAttempts} between 1 and 10`),
     check("quizzes_opens_check", sql`${t.opensAt} is null or ${t.opensAt} < ${t.deadline}`),
@@ -756,6 +825,78 @@ export const answers = pgTable(
     ),
     check("answers_text_length_check", sql`${t.textAnswer} is null or length(${t.textAnswer}) <= 500`),
   ],
+);
+
+/**
+ * Gradebook overrides (4.6): the value the gradebook uses instead of the calculated one,
+ * for one item (an assignment or a quiz) or, with neither set, for the course total.
+ * Student work (submissions, attempts, scores) is never changed. Removing an override
+ * sets its value(s) to NULL with a reason; the row stays so its history keeps pointing at it.
+ */
+export const gradeOverrides = pgTable(
+  "grade_overrides",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    courseId: courseRef(),
+    studentId: uuid()
+      .notNull()
+      .references((): AnyPgColumn => users.id, { onDelete: "restrict" }),
+    assignmentId: uuid(),
+    quizId: uuid(),
+    // Item override: points that count instead of the calculated value (NULL = removed).
+    points: doublePrecision(),
+    // Course total override: a percentage and/or a letter of the course's scale (both NULL = removed).
+    percent: doublePrecision(),
+    letter: text(),
+    reason: text().notNull(),
+    setBy: uuid()
+      .notNull()
+      .references((): AnyPgColumn => users.id, { onDelete: "restrict" }),
+    updatedAt: ts().notNull().defaultNow(),
+  },
+  (t) => [
+    unique("grade_overrides_target_unique").on(t.courseId, t.studentId, t.assignmentId, t.quizId).nullsNotDistinct(),
+    index().on(t.studentId),
+    foreignKey({ name: "grade_overrides_assignment_same_course_fk", columns: [t.assignmentId, t.courseId], foreignColumns: [assignments.id, assignments.courseId] }).onDelete("restrict"),
+    foreignKey({ name: "grade_overrides_quiz_same_course_fk", columns: [t.quizId, t.courseId], foreignColumns: [quizzes.id, quizzes.courseId] }).onDelete("restrict"),
+    // A course letter must be a band of the course's scale (so it can't be removed while used).
+    foreignKey({ name: "grade_overrides_letter_in_scale_fk", columns: [t.courseId, t.letter], foreignColumns: [gradeBands.courseId, gradeBands.letter] }).onDelete("restrict"),
+    check("grade_overrides_target_check", sql`num_nonnulls(${t.assignmentId}, ${t.quizId}) <= 1`),
+    check(
+      "grade_overrides_value_check",
+      sql`case when ${t.assignmentId} is null and ${t.quizId} is null
+        then ${t.points} is null and (${t.percent} is null or (${t.percent} >= 0 and ${t.percent} <= 100))
+        else ${t.percent} is null and ${t.letter} is null and (${t.points} is null or ${t.points} >= 0) end`,
+    ),
+    check("grade_overrides_reason_check", sql`length(btrim(${t.reason})) between 1 and 1000`),
+  ],
+);
+
+/** Append-only history of every override and removal (written by a trigger, 0007). */
+export const gradeOverrideEvents = pgTable(
+  "grade_override_events",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    overrideId: uuid()
+      .notNull()
+      .references(() => gradeOverrides.id, { onDelete: "restrict" }),
+    courseId: uuid().notNull(),
+    studentId: uuid().notNull(),
+    assignmentId: uuid(),
+    quizId: uuid(),
+    oldPoints: doublePrecision(),
+    newPoints: doublePrecision(),
+    oldPercent: doublePrecision(),
+    newPercent: doublePrecision(),
+    oldLetter: text(),
+    newLetter: text(),
+    reason: text().notNull(),
+    changedBy: uuid()
+      .notNull()
+      .references((): AnyPgColumn => users.id, { onDelete: "restrict" }),
+    createdAt: createdAt(),
+  },
+  (t) => [index().on(t.courseId, t.createdAt), index().on(t.overrideId)],
 );
 
 export const liveSessions = pgTable(

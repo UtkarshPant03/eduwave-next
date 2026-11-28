@@ -18,9 +18,60 @@ eduWave uses PostgreSQL through Drizzle ORM. The schema is in `src/db/schema.ts`
 | `0004_attendance.sql` | Attendance: settings, sessions, records, append-only history and correction requests (Phase 3; plan below). |
 | `0005_question_bank.sql` | Question bank, question types and points, random slots, open date, multiple attempts (Phase 3; plan below). |
 | `0006_assignment_versions.sql` | Assignments: several files per submission, submission versions, feedback files (Phase 3; plan below). |
+| `0007_gradebook.sql` | Gradebook: total method, weighted categories, grade scale as data, overrides with append-only history, grade release (Phase 3; plan below). |
 
 ```bash
 npm run db:migrate        # applies pending migrations; running it again is a no-op
+```
+
+### Plan for `0007_gradebook` (Phase 3, written before the change)
+
+**Status.** Implemented in 4.6.0 (in QA). Verified on PGlite as a fresh install (migrate + seed). **Not yet verified as an upgrade of a seeded 0006 database, and not on PostgreSQL** (QA).
+
+**Design choices.**
+- **Default = today.** Every existing course becomes `points` mode (sum of earned ÷ sum of possible, exactly today's calculation), gets today's 10-point scale as data, and every assignment and quiz stays **released**. So every number, letter and GPA is unchanged after the upgrade.
+- **Weighted mode** = Σ(category weight × category percentage) ÷ Σ(weights of categories that have counted items). A category with nothing counted yet doesn't pull the total down (its weight is re-normalised away). Uncategorised items are **not allowed** in weighted mode: switching is refused until every assignment and quiz has a category, and while a course is weighted, new or edited items must name one. (Checked on the server; a multi-row rule like this isn't a good fit for a trigger.)
+- **Overrides are rows, never edits of student work.** An override replaces the value the gradebook uses for one item (or the course total/letter); the submission, attempt and its score stay as they were. Removing an override sets its value to NULL with a reason: the row stays so the history keeps pointing at it.
+- **Release** hides an item from students only. Staff views, exports and calculations are unchanged.
+
+**Change.** Additive: one enum, new columns with defaults that keep today's behaviour, four new tables, triggers.
+
+| Object | Change |
+|---|---|
+| enum `grade_total_method` | `points`, `weighted` |
+| `courses.grade_total_method` | New, `NOT NULL DEFAULT 'points'` |
+| `grade_categories` (new) | Per course: `name` (unique per course), `weight` (0–100, CHECK), `position`. `UNIQUE (id, course_id)` for composite FKs |
+| `assignments`, `quizzes` | New `grade_category_id` (nullable; single FK `ON DELETE SET NULL` plus composite FK `(grade_category_id, course_id)` so the category is of the same course: same pattern as `section_id`), `grades_released boolean NOT NULL DEFAULT true`, `UNIQUE (id, course_id)` |
+| `grade_bands` (new) | The course's scale: `(course_id, letter)` primary key, `label`, `min_percent` (integer 0–100), `points` (≥ 0). Letters 1–8 characters |
+| `grade_overrides` (new) | One row per student per target: an assignment, a quiz, or neither (= the course total). `points` (item), `percent` and `letter` (course total), mandatory `reason`, `set_by`, `updated_at`. UNIQUE `NULLS NOT DISTINCT (course_id, student_id, assignment_id, quiz_id)` (PostgreSQL 15+, already the minimum) |
+| `grade_override_events` (new) | **Append-only history** of every override and removal: old and new values, reason, who, when. Written by a trigger |
+
+**Back-fill.** Every existing course gets the eight bands of today's `GRADE_SCALE` (O 90 10, A+ 80 9, A 70 8, B+ 60 7, B 50 6, C 45 5, P 40 4, F 0 0). Column defaults do the rest (`points` mode, released, uncategorised).
+
+**Rules enforced by the database:**
+- A category's weight is 0–100; an item's category belongs to the item's course (composite FK).
+- Each new course gets the default scale (trigger `AFTER INSERT ON courses`), so every course has its scale as data. Band letters are unique per course, minimums 0–100, points ≥ 0. Strictly descending minimums and a band starting at 0 are checked by the server when the scale is saved (a whole-scale rule, saved in one transaction).
+- An override targets at most one item; item overrides carry points (≥ 0, and ≤ the assignment's maximum), course overrides a percent (0–100) and/or a letter; the reason is non-empty. The item belongs to the override's course (composite FKs) and the student is enrolled (trigger). A course override's letter must exist in the course's scale (composite FK to `grade_bands`), so a letter in use can't be removed from the scale.
+- An override's course, student and target can't be changed after creation (trigger); overrides with history can't be deleted (`ON DELETE RESTRICT` from the history).
+- Every insert or change of an override writes a `grade_override_events` row (trigger), which is append-only (`eduwave_append_only()`).
+
+**Rollback.** Discards categories, custom scales, overrides and their history, and the release flags (take a backup first).
+
+```sql
+DROP TRIGGER courses_default_grade_scale ON courses;
+DROP TRIGGER grade_overrides_rules ON grade_overrides;  DROP TRIGGER grade_overrides_history ON grade_overrides;
+DROP TRIGGER grade_override_events_append_only ON grade_override_events;
+DROP FUNCTION eduwave_default_grade_scale(), eduwave_grade_override_rules(), eduwave_grade_override_history();
+DROP TABLE grade_override_events, grade_overrides, grade_bands;
+ALTER TABLE assignments DROP CONSTRAINT assignments_grade_category_same_course_fk, DROP CONSTRAINT assignments_id_course_unique,
+  DROP COLUMN grade_category_id, DROP COLUMN grades_released;
+ALTER TABLE quizzes DROP CONSTRAINT quizzes_grade_category_same_course_fk, DROP CONSTRAINT quizzes_id_course_unique,
+  DROP COLUMN grade_category_id, DROP COLUMN grades_released;
+DROP TABLE grade_categories;
+ALTER TABLE courses DROP COLUMN grade_total_method;
+DROP TYPE grade_total_method;
+-- restore the 0001 version of eduwave_max_points_above_grades() (submissions only), then
+-- remove 0007 from drizzle.__drizzle_migrations and drizzle/meta/_journal.json
 ```
 
 ### Plan for `0006_assignment_versions` (Phase 3, written before the change)
@@ -261,6 +312,10 @@ These hold even if application code has a bug, or someone edits the database by 
 | Submission versions and their file links can't be edited or deleted; a graded submission accepts no new version; version numbers are consecutive | Append-only trigger; trigger on `submission_versions` |
 | A version's files belong to the assignment's course, were uploaded by the submitting student, and number at most `max_files` | Trigger on `submission_files` |
 | A feedback file belongs to the submission's course; files used by versions or feedback can't be deleted | Trigger on `feedback_files`; `ON DELETE RESTRICT` |
+| An item's grade category belongs to the item's course; weights are 0–100 | Composite FK; CHECK |
+| Every course has a grade scale; band letters unique per course, minimums 0–100, points ≥ 0 | Trigger on `courses` (default scale); PK; CHECK |
+| An override targets at most one item of its own course, for an enrolled student; its target can't change; values in range (item points ≤ the assignment's maximum); a course letter exists in the course's scale; a reason is given | CHECKs, composite FKs, trigger on `grade_overrides` |
+| Every override and removal is written to an append-only history; overrides with history can't be deleted; an assignment's maximum can't drop below an override | Trigger → `grade_override_events`; append-only trigger; `ON DELETE RESTRICT`; trigger on `assignments` |
 
 ## Transactions and locking
 
@@ -283,7 +338,10 @@ These hold even if application code has a bug, or someone edits the database by 
 | When an item closes | Assignments: due date + late window. Quizzes: the deadline. |
 | Ungraded submissions | Don't count until graded. |
 | Letter grade | Uses the **displayed whole-number percentage** (rounded half up), so the letter always matches the number shown. See `src/lib/grading.ts`. |
-| Grade scale | A 10-point scale. To change it for an institution, edit `GRADE_SCALE`. |
+| Grade scale | Data per course (`grade_bands`, 4.6). Every course starts with the 10-point scale (`DEFAULT_GRADE_SCALE`, inserted by a trigger); staff with `course.manage` edit it on the gradebook setup page. Not a university policy (D4 open). |
+| Course total | Per course (`courses.grade_total_method`): `points` (default) = earned ÷ possible over counted items; `weighted` = Σ(category weight × category %) ÷ Σ(weights of categories with counted items). Uncategorised items aren't allowed in weighted mode (refused on the server). |
+| Overrides | A row in `grade_overrides` replaces the value one item counts with (or the course total/letter) for one student; the student's work is unchanged. History in `grade_override_events` (trigger, append-only). |
+| Release | `grades_released` per assignment/quiz (default true). Students' views drop unreleased items' values before rendering; staff views and exports are unchanged. |
 
 ## Backup and restore
 
