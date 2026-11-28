@@ -23,6 +23,7 @@ import {
   check,
   customType,
   date,
+  doublePrecision,
   foreignKey,
   index,
   integer,
@@ -467,6 +468,86 @@ export const gradeEvents = pgTable(
   (t) => [index().on(t.submissionId, t.createdAt), index().on(t.graderId)],
 );
 
+/* ============================ question bank ============================ */
+/*
+ * Phase 3 (4.4). Each course has a bank of questions in staff-created categories. Quizzes
+ * never link to the bank: adding a bank question copies it into `questions`, and a random
+ * slot copies its category's questions into the quiz as a pool when the quiz is saved.
+ * So bank edits can never change a started attempt or a score. See docs/DATABASE.md.
+ */
+
+export const questionTypeEnum = pgEnum("question_type", ["single", "multiple", "true_false", "short_answer", "numerical"]);
+export const gradingMethodEnum = pgEnum("grading_method", ["highest", "average", "first", "last"]);
+
+/** Answer-key columns shared by bank questions and quiz questions. */
+const questionBody = () => ({
+  type: questionTypeEnum().notNull().default("single"),
+  prompt: text().notNull(),
+  // Choice types only (empty for short answer and numerical).
+  options: text().array().notNull(),
+  // Never sent to students before the deadline. Grading happens on the server.
+  correctIndex: integer(), // single choice, true/false
+  correctIndexes: integer().array(), // multiple answer (all-or-nothing)
+  acceptedAnswers: text().array(), // short answer (trimmed, case-insensitive, whitespace collapsed)
+  numericAnswer: doublePrecision(), // numerical: accepted value ...
+  tolerance: doublePrecision(), // ... plus or minus this (>= 0)
+  points: integer().notNull().default(1),
+  explanation: text(),
+});
+
+/** Each type's answer key must be complete and in range (coalesce: a NULL result must fail). */
+const questionShapeCheck = (name: string, t: {
+  type: AnyPgColumn; options: AnyPgColumn; correctIndex: AnyPgColumn; correctIndexes: AnyPgColumn;
+  acceptedAnswers: AnyPgColumn; numericAnswer: AnyPgColumn; tolerance: AnyPgColumn;
+}) =>
+  check(
+    name,
+    sql`coalesce(case ${t.type}
+      when 'single' then cardinality(${t.options}) between 2 and 6 and ${t.correctIndex} >= 0 and ${t.correctIndex} < cardinality(${t.options})
+      when 'true_false' then cardinality(${t.options}) = 2 and ${t.correctIndex} between 0 and 1
+      when 'multiple' then cardinality(${t.options}) between 2 and 6 and cardinality(${t.correctIndexes}) between 1 and cardinality(${t.options})
+        and 0 <= all(${t.correctIndexes}) and cardinality(${t.options}) > all(${t.correctIndexes})
+      when 'short_answer' then cardinality(${t.options}) = 0 and cardinality(${t.acceptedAnswers}) between 1 and 20
+      when 'numerical' then cardinality(${t.options}) = 0 and ${t.numericAnswer} is not null and ${t.tolerance} >= 0
+    end, false)`,
+  );
+
+export const questionCategories = pgTable(
+  "question_categories",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    courseId: courseRef(),
+    name: text().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [unique().on(t.courseId, t.name), unique("question_categories_id_course_unique").on(t.id, t.courseId)],
+);
+
+export const bankQuestions = pgTable(
+  "bank_questions",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    courseId: courseRef(),
+    categoryId: uuid().notNull(),
+    ...questionBody(),
+    tags: text().array().notNull().default(sql`'{}'::text[]`),
+    createdBy: uuid()
+      .notNull()
+      .references((): AnyPgColumn => users.id, { onDelete: "restrict" }),
+    createdAt: createdAt(),
+    updatedAt: ts().notNull().defaultNow(),
+  },
+  (t) => [
+    index().on(t.courseId, t.categoryId),
+    // The category belongs to the same course; a category with questions can't be deleted.
+    foreignKey({ name: "bank_questions_category_same_course_fk", columns: [t.categoryId, t.courseId], foreignColumns: [questionCategories.id, questionCategories.courseId] }).onDelete("restrict"),
+    questionShapeCheck("bank_questions_shape_check", t),
+    check("bank_questions_points_check", sql`${t.points} > 0`),
+  ],
+);
+
+/* ============================== quizzes ============================== */
+
 export const quizzes = pgTable(
   "quizzes",
   {
@@ -478,6 +559,12 @@ export const quizzes = pgTable(
     timeLimitMinutes: integer().notNull(),
     deadline: ts().notNull(),
     shuffle: boolean().notNull().default(true),
+    // Students can't start before this (null = open as soon as it's published).
+    opensAt: ts(),
+    // 1 = the pre-4.4 behaviour (one attempt).
+    maxAttempts: integer().notNull().default(1),
+    // Which attempt counts in the gradebook when there are several.
+    gradingMethod: gradingMethodEnum().notNull().default("highest"),
     createdAt: createdAt(),
   },
   (t) => [
@@ -485,6 +572,31 @@ export const quizzes = pgTable(
     index().on(t.sectionId),
     sameCourseSection("quizzes_section_same_course_fk", t),
     check("quizzes_time_limit_check", sql`${t.timeLimitMinutes} > 0`),
+    check("quizzes_attempts_check", sql`${t.maxAttempts} between 1 and 10`),
+    check("quizzes_opens_check", sql`${t.opensAt} is null or ${t.opensAt} < ${t.deadline}`),
+  ],
+);
+
+/** "Random N questions from category X". Its pool is copied into `questions` (slot_id). */
+export const quizSlots = pgTable(
+  "quiz_slots",
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    quizId: uuid()
+      .notNull()
+      .references(() => quizzes.id, { onDelete: "cascade" }),
+    position: integer().notNull(),
+    // Snapshot of where the pool came from (no FK: deleting a category never touches a quiz).
+    categoryId: uuid().notNull(),
+    categoryName: text().notNull(),
+    pickCount: integer().notNull(),
+    // Points for each picked question (so every attempt has the same total).
+    points: integer().notNull().default(1),
+  },
+  (t) => [
+    index().on(t.quizId),
+    unique("quiz_slots_id_quiz_unique").on(t.id, t.quizId),
+    check("quiz_slots_values_check", sql`${t.pickCount} > 0 and ${t.points} > 0`),
   ],
 );
 
@@ -496,25 +608,26 @@ export const questions = pgTable(
       .notNull()
       .references(() => quizzes.id, { onDelete: "cascade" }),
     position: integer().notNull(),
-    prompt: text().notNull(),
-    options: text().array().notNull(),
-    // Never sent to students before the deadline. Grading happens on the server.
-    correctIndex: integer().notNull(),
-    explanation: text(),
+    ...questionBody(),
+    // Set for a random slot's pool question (each attempt is given only its picks).
+    slotId: uuid(),
+    // The bank question this was copied from (provenance only: no FK, a copy is not a link).
+    bankQuestionId: uuid(),
   },
   (t) => [
     index().on(t.quizId),
     unique("questions_id_quiz_unique").on(t.id, t.quizId),
-    check(
-      "questions_options_check",
-      sql`cardinality(${t.options}) between 2 and 6 and ${t.correctIndex} >= 0 and ${t.correctIndex} < cardinality(${t.options})`,
-    ),
+    foreignKey({ name: "questions_slot_same_quiz_fk", columns: [t.slotId, t.quizId], foreignColumns: [quizSlots.id, quizSlots.quizId] }),
+    questionShapeCheck("questions_shape_check", t),
+    check("questions_points_check", sql`${t.points} > 0`),
   ],
 );
 
 /**
  * Per-attempt presentation order. `optionOrders[questionId][displayIndex] = originalIndex`.
  * Neighbours see different orders, and the client only ever sends display indexes.
+ * `questionOrder` lists exactly the questions this attempt was given (random-slot picks
+ * included), so it also fixes WHICH questions count towards the attempt.
  */
 export type AttemptLayout = { questionOrder: string[]; optionOrders: Record<string, number[]> };
 
@@ -529,6 +642,8 @@ export const attempts = pgTable(
     studentId: uuid()
       .notNull()
       .references(() => users.id, { onDelete: "restrict" }),
+    // 1, 2, ... up to the quiz's max_attempts (checked by a trigger).
+    attemptNumber: integer().notNull().default(1),
     // The server's clock is the source of truth for the timer.
     startedAt: ts().notNull().defaultNow(),
     submittedAt: ts(),
@@ -537,8 +652,10 @@ export const attempts = pgTable(
     layout: jsonb().$type<AttemptLayout>(),
   },
   (t) => [
-    // One attempt per student per quiz, enforced by the database itself.
-    unique().on(t.quizId, t.studentId),
+    // Each attempt number once per student per quiz, and at most one attempt open at a time.
+    unique("attempts_quiz_student_number_unique").on(t.quizId, t.studentId, t.attemptNumber),
+    uniqueIndex("attempts_one_open_idx").on(t.quizId, t.studentId).where(sql`${t.submittedAt} is null`),
+    check("attempts_number_check", sql`${t.attemptNumber} >= 1`),
     index().on(t.studentId),
     unique("attempts_id_quiz_unique").on(t.id, t.quizId),
     check("attempts_score_check", sql`${t.score} is null or (${t.score} >= 0 and ${t.score} <= ${t.total})`),
@@ -558,8 +675,12 @@ export const answers = pgTable(
       .references(() => questions.id, { onDelete: "restrict" }),
     // Denormalised so the database can prove the question belongs to the attempt's quiz.
     quizId: uuid().notNull(),
-    // Always the ORIGINAL option index (mapped from the display index on save).
-    selectedIndex: integer().notNull(),
+    // Exactly one response column is set, by question type.
+    // Always ORIGINAL option indexes (mapped from display indexes on save).
+    selectedIndex: integer(), // single choice, true/false
+    selectedIndexes: integer().array(), // multiple answer
+    textAnswer: text(), // short answer, as typed
+    numberAnswer: doublePrecision(), // numerical
   },
   (t) => [
     primaryKey({ columns: [t.attemptId, t.questionId] }),
@@ -567,6 +688,12 @@ export const answers = pgTable(
     foreignKey({ name: "answers_attempt_same_quiz_fk", columns: [t.attemptId, t.quizId], foreignColumns: [attempts.id, attempts.quizId] }).onDelete("cascade"),
     foreignKey({ name: "answers_question_same_quiz_fk", columns: [t.questionId, t.quizId], foreignColumns: [questions.id, questions.quizId] }),
     check("answers_selected_index_check", sql`${t.selectedIndex} between 0 and 5`),
+    check("answers_one_response_check", sql`num_nonnulls(${t.selectedIndex}, ${t.selectedIndexes}, ${t.textAnswer}, ${t.numberAnswer}) = 1`),
+    check(
+      "answers_selected_indexes_check",
+      sql`${t.selectedIndexes} is null or (cardinality(${t.selectedIndexes}) <= 6 and 0 <= all(${t.selectedIndexes}) and 5 >= all(${t.selectedIndexes}))`,
+    ),
+    check("answers_text_length_check", sql`${t.textAnswer} is null or length(${t.textAnswer}) <= 500`),
   ],
 );
 

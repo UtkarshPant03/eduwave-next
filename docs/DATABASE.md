@@ -16,9 +16,68 @@ eduWave uses PostgreSQL through Drizzle ORM. The schema is in `src/db/schema.ts`
 | `0002_completions_integrity.sql` | Completion ticks must reference a real item of the same course. |
 | `0003_institution.sql` | Academic structure, course staff and department roles (Phase 2; plan below). |
 | `0004_attendance.sql` | Attendance: settings, sessions, records, append-only history and correction requests (Phase 3; plan below). |
+| `0005_question_bank.sql` | Question bank, question types and points, random slots, open date, multiple attempts (Phase 3; plan below). |
 
 ```bash
 npm run db:migrate        # applies pending migrations; running it again is a no-op
+```
+
+### Plan for `0005_question_bank` (Phase 3, written before the change)
+
+**Status.** Implemented in 4.4.0 (in QA). Verified on PGlite: fresh install (migrate + seed, `test:db` 36/36) and an upgrade of a 0004 database holding a scored attempt (score, total, answers unchanged; the attempt became attempt 1; a second attempt is still refused). **Not yet verified on PostgreSQL.**
+
+**Design choice: snapshots, not live links.** A quiz never points at a bank question. Adding a bank question to a quiz **copies** it into `questions` (with `bank_question_id` kept only as provenance, without a foreign key). A random slot copies **every** question of its category into the quiz as that slot's pool when the quiz is saved; each attempt picks N of them when it starts and records the picks in `attempts.layout`. Consequences:
+- Editing or deleting a bank question never changes a quiz, a started attempt or a score (spec criterion 3). The existing "questions are frozen once a student has started" trigger keeps protecting what attempts were given, including random pools.
+- To pick up bank edits, staff re-save the quiz **before** anyone starts (the pool is re-copied on save). After the first attempt the pool is frozen with the rest of the quiz.
+
+**Change.** Additive. Two new enums, three new tables, new nullable or defaulted columns, and replaced CHECK constraints that accept every existing row.
+
+| Object | Change |
+|---|---|
+| enum `question_type` | `single`, `multiple`, `true_false`, `short_answer`, `numerical` |
+| enum `grading_method` | `highest`, `average`, `first`, `last` |
+| `question_categories` (new) | Per course: `name` (unique per course). A category with questions can't be deleted (RESTRICT) |
+| `bank_questions` (new) | Per course: category (composite FK keeps it in the same course), type, prompt, options, answer key columns, points, explanation, free-text `tags`, author, timestamps |
+| `quiz_slots` (new) | "Random N questions from category X": `quiz_id`, `position`, `category_id` and `category_name` (snapshot; no FK, so deleting a category never touches a quiz), `pick_count`, `points` per picked question |
+| `questions` | New `type` (default `single`), `points` (default 1), `correct_indexes int[]`, `accepted_answers text[]`, `numeric_answer`, `tolerance`, `slot_id` (composite FK to `quiz_slots(id, quiz_id)`: pool questions belong to a slot of the same quiz), `bank_question_id` (provenance only). `correct_index` becomes nullable (short answer and numerical have no options) |
+| `quizzes` | New `opens_at` (nullable), `max_attempts` (default 1), `grading_method` (default `highest`) |
+| `attempts` | New `attempt_number` (default 1). UNIQUE `(quiz_id, student_id)` is replaced by UNIQUE `(quiz_id, student_id, attempt_number)` plus a partial unique index allowing **one open attempt** per student per quiz |
+| `answers` | `selected_index` becomes nullable; new `selected_indexes int[]` (multiple answer), `text_answer` (short answer), `number_answer` (numerical). Exactly one of the four is set |
+
+**Back-fill.** None needed beyond column defaults: existing questions become `single` worth 1 point, existing quizzes allow 1 attempt graded by `highest`, existing attempts become attempt 1, existing answers keep `selected_index`. Scores already stored are not recomputed; new scoring gives the same result for single-choice questions worth 1 point (1 point when `selected_index = correct_index`).
+
+**Rules enforced by the database:**
+- Question shape per type (CHECK on both `questions` and `bank_questions`): single choice 2–6 options with a valid `correct_index`; true/false exactly 2 options and index 0 or 1; multiple answer 2–6 options and 1..n valid `correct_indexes`; short answer no options and 1–20 accepted answers; numerical no options, a value and `tolerance >= 0`. Points > 0.
+- Exactly one response column per answer; `selected_indexes` within 0–5.
+- An answer's question must be one this attempt was given (trigger on `answers`, using `attempts.layout`; attempts without a layout, from before 4.0, are exempt).
+- Attempt numbers are ≥ 1 and ≤ the quiz's `max_attempts`; an attempt can't start before `opens_at` (trigger on `attempts`).
+- `max_attempts` between 1 and 10 and can't be lowered below an attempt number already used (trigger on `quizzes`); `opens_at` < `deadline`.
+- `quiz_slots`: `pick_count` and `points` > 0; slots are frozen once anyone has started (same trigger function as questions).
+- Slot pools stay in their quiz (composite FK).
+
+**Rollback.** Only safe before any multi-attempt, non-single-choice or random-slot data exists (otherwise it discards that data; take a backup first).
+
+```sql
+DROP TRIGGER answers_in_attempt ON answers;  DROP TRIGGER attempts_rules ON attempts;
+DROP TRIGGER quizzes_max_attempts_used ON quizzes;  DROP TRIGGER quiz_slots_frozen ON quiz_slots;
+DROP FUNCTION eduwave_answer_in_attempt(), eduwave_attempt_rules(), eduwave_max_attempts_used();
+DELETE FROM answers WHERE selected_index IS NULL;                 -- non-choice answers
+DELETE FROM attempts WHERE attempt_number > 1;                    -- extra attempts (their answers cascade)
+ALTER TABLE answers DROP CONSTRAINT answers_one_response_check, DROP CONSTRAINT answers_selected_indexes_check,
+  DROP COLUMN selected_indexes, DROP COLUMN text_answer, DROP COLUMN number_answer, ALTER COLUMN selected_index SET NOT NULL;
+DROP INDEX attempts_one_open_idx;
+ALTER TABLE attempts DROP CONSTRAINT attempts_quiz_student_number_unique, DROP CONSTRAINT attempts_number_check, DROP COLUMN attempt_number,
+  ADD CONSTRAINT "attempts_quizId_studentId_unique" UNIQUE (quiz_id, student_id);
+-- questions of other types and random pools must be removed (only possible on quizzes nobody started) before:
+ALTER TABLE questions DROP CONSTRAINT questions_shape_check, DROP CONSTRAINT questions_points_check, DROP CONSTRAINT questions_slot_same_quiz_fk,
+  DROP COLUMN type, DROP COLUMN points, DROP COLUMN correct_indexes, DROP COLUMN accepted_answers, DROP COLUMN numeric_answer,
+  DROP COLUMN tolerance, DROP COLUMN slot_id, DROP COLUMN bank_question_id, ALTER COLUMN correct_index SET NOT NULL,
+  ADD CONSTRAINT questions_options_check CHECK (cardinality(options) between 2 and 6 and correct_index >= 0 and correct_index < cardinality(options));
+ALTER TABLE quizzes DROP CONSTRAINT quizzes_attempts_check, DROP CONSTRAINT quizzes_opens_check,
+  DROP COLUMN opens_at, DROP COLUMN max_attempts, DROP COLUMN grading_method;
+DROP TABLE quiz_slots, bank_questions, question_categories;
+DROP TYPE question_type, grading_method;
+-- then remove 0005 from drizzle.__drizzle_migrations and drizzle/meta/_journal.json
 ```
 
 ### Plan for `0004_attendance` (Phase 3, written before the change)
@@ -145,7 +204,12 @@ These hold even if application code has a bug, or someone edits the database by 
 | An activity's section belongs to the same course | Composite FK `(section_id, course_id) → sections(id, course_id)` |
 | A resource's file belongs to the same course | Composite FK `(file_id, course_id) → files(id, course_id)` |
 | An answer's question belongs to the attempt's quiz | `answers.quiz_id` + composite FKs to `attempts(id, quiz_id)` and `questions(id, quiz_id)` |
-| One submission per student per assignment; one attempt per student per quiz | UNIQUE constraints |
+| One submission per student per assignment; each attempt number once per student per quiz, and at most one open attempt | UNIQUE constraints; partial unique index |
+| Attempts stay within the quiz's maximum (default 1) and can't start before its opening time; the maximum can't drop below an attempt already made | Triggers on `attempts` and `quizzes` |
+| Every question's answer key matches its type (options, correct option(s), accepted answers, value and tolerance); points > 0 | CHECK on `questions` and `bank_questions` |
+| An answer is for a question its attempt was given (random picks included), with exactly one response column set | Trigger on `answers`; CHECK |
+| Random slots can't change once anyone has started; a slot's pool belongs to the same quiz | Trigger on `quiz_slots`; composite FK |
+| A bank question's category belongs to the same course; a category with questions can't be deleted | Composite FK, `ON DELETE RESTRICT` |
 | Grades ≥ 0; valid answer indexes; score between 0 and total; positive points, time limits and durations; a resource has exactly one of URL or file | CHECK constraints |
 | A finished attempt always has a score, and only a finished one does | CHECK constraint |
 | Grade ≤ the assignment's maximum points; the maximum can't drop below an awarded grade | Triggers on `submissions` and `assignments` |
@@ -163,8 +227,8 @@ These hold even if application code has a bug, or someone edits the database by 
 | Operation | Protection |
 |---|---|
 | Saving a quiz answer | Locks the attempt row (`FOR UPDATE`) and checks it is still open, in the same transaction. |
-| Finalising an attempt | Same lock, then counts correct answers and records the score. A save and a finalisation can't interleave. Tested with real concurrency on PostgreSQL. |
-| Starting a quiz vs. editing its questions | The quiz row is locked `FOR SHARE` / `FOR UPDATE`, so no attempt snapshots questions that are about to change. |
+| Finalising an attempt | Same lock, then grades the answers to the questions the attempt was given (by type, in `src/lib/questions.ts`) and records the score. A save and a finalisation can't interleave. Tested with real concurrency on PostgreSQL (before 4.4) and PGlite. |
+| Starting a quiz vs. editing its questions | The quiz row is locked `FOR SHARE` / `FOR UPDATE`, so no attempt snapshots questions (or random picks) that are about to change. A further attempt starts only after the previous one is closed; the attempt number is checked under the same lock and by UNIQUE constraints. |
 | Submitting vs. grading an assignment | Both lock the submission row. A grade also carries the version (submission time) the grader saw, and is refused if the student resubmitted meanwhile. |
 | Grading | Grade, grader and a `grade_events` history row are written in one transaction. |
 | Deleting an activity | Course ownership check, student-work check and delete happen in one transaction with a row lock. `ON DELETE RESTRICT` is the backstop. |
