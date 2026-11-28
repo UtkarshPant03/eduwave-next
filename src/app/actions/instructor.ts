@@ -18,6 +18,7 @@ import { audit } from "@/lib/audit";
 import { notifyCourse, notifyUser, notifyUsers } from "@/lib/notify";
 import { checkUpload } from "@/lib/uploads";
 import { isForeignKeyViolation } from "@/lib/db-errors";
+import { checkQuestion, GRADING_METHODS, MAX_ATTEMPTS, questionFields, toQuestionColumns } from "@/lib/questions";
 
 const uuid = z.uuid();
 const isoDate = (msg: string) => z.iso.datetime({ message: msg }).transform((s) => new Date(s));
@@ -439,14 +440,19 @@ export async function gradeSubmission(_: FormState, formData: FormData): Promise
 
 /* --------------------------------- quizzes --------------------------------- */
 
-const questionInput = z
-  .object({
-    prompt: z.string().trim().min(1, "Every question needs text.").max(1000),
-    options: z.array(z.string().trim().min(1, "Options cannot be empty.").max(300)).min(2, "Each question needs at least 2 options.").max(6),
-    correctIndex: z.number().int().min(0),
-    explanation: z.string().trim().max(1000).optional(),
-  })
-  .refine((q) => q.correctIndex < q.options.length, "Pick a correct option for every question.");
+/** A fixed question in a quiz; `position` is its place among questions AND random slots. */
+const quizQuestionInput = questionFields
+  .extend({ position: z.number().int().min(0).max(1000).optional(), bankQuestionId: optionalUuid.optional() })
+  .superRefine(checkQuestion)
+  .transform(({ position, bankQuestionId, ...q }) => ({ ...toQuestionColumns(q), position, bankQuestionId: bankQuestionId ?? null }));
+
+/** "Random N questions from category X", each worth `points`. */
+const slotInput = z.object({
+  categoryId: uuid,
+  pickCount: z.coerce.number().int().min(1, "Pick at least 1 question.").max(50),
+  points: z.coerce.number().int().min(1).max(100).default(1),
+  position: z.number().int().min(0).max(1000),
+});
 
 const quizInput = z.object({
   courseId: uuid,
@@ -456,11 +462,101 @@ const quizInput = z.object({
   timeLimitMinutes: z.coerce.number().int().min(1, "Time limit must be at least 1 minute.").max(300),
   // The browser converts datetime-local to ISO (UTC) so the server doesn't guess the zone.
   deadline: isoDate("Choose a valid deadline."),
+  opensAt: z
+    .string()
+    .nullish()
+    .transform((s) => s || null)
+    .pipe(z.iso.datetime({ message: "Choose a valid opening time." }).transform((s) => new Date(s)).nullable()),
   shuffle: z.boolean().default(true),
-  questions: z.array(questionInput).min(1, "Add at least one question.").max(150),
+  maxAttempts: z.coerce.number().int().min(1, "Allow at least 1 attempt.").max(MAX_ATTEMPTS, `At most ${MAX_ATTEMPTS} attempts.`).default(1),
+  gradingMethod: z.enum(GRADING_METHODS).default("highest"),
+  questions: z.array(quizQuestionInput).max(150).default([]),
+  slots: z.array(slotInput).max(20).default([]),
 });
 
 export type QuizDraft = z.input<typeof quizInput>;
+type ParsedQuestions = z.output<typeof quizInput>["questions"];
+type ParsedSlots = z.output<typeof quizInput>["slots"];
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+function contentProblem(questions: ParsedQuestions, slots: ParsedSlots): string | null {
+  if (questions.length + slots.length === 0) return "Add at least one question.";
+  const cats = slots.map((s) => s.categoryId);
+  if (new Set(cats).size !== cats.length) return "Use one random slot per category (set how many questions it picks instead).";
+  return null;
+}
+
+function timingProblem(quiz: { opensAt: Date | null; deadline: Date }): string | null {
+  if (quiz.opensAt && quiz.opensAt.getTime() >= quiz.deadline.getTime()) return "The quiz must open before its deadline.";
+  return null;
+}
+
+/**
+ * Writes a quiz's fixed questions and random slots. Each slot's pool is COPIED from the
+ * course's question bank (a snapshot: later bank edits never change this quiz once a
+ * student has started). Returns an error message instead of writing if a slot asks for
+ * more questions than its category has. Call inside the transaction that locks the quiz.
+ */
+async function writeQuizContent(tx: Tx, courseId: string, quizId: string, questions: ParsedQuestions, slots: ParsedSlots): Promise<string | null> {
+  const bq = schema.bankQuestions;
+  // Provenance links are kept only for this course's own bank questions.
+  const claimed = questions.map((q) => q.bankQuestionId).filter((id): id is string => Boolean(id));
+  const ownBank = new Set(
+    claimed.length
+      ? (await tx.select({ id: bq.id }).from(bq).where(and(eq(bq.courseId, courseId), inArray(bq.id, claimed)))).map((r) => r.id)
+      : [],
+  );
+
+  const pools: { slot: ParsedSlots[number]; name: string; pool: (typeof bq.$inferSelect)[] }[] = [];
+  for (const slot of slots) {
+    const category = await tx.query.questionCategories.findFirst({ where: (c, { and, eq }) => and(eq(c.id, slot.categoryId), eq(c.courseId, courseId)) });
+    if (!category) return "A random slot uses a category that no longer exists in this course's question bank.";
+    // A question already in the quiz as a fixed question isn't also drawn at random.
+    const pool = (await tx.select().from(bq).where(and(eq(bq.courseId, courseId), eq(bq.categoryId, category.id)))).filter((q) => !ownBank.has(q.id));
+    if (slot.pickCount > pool.length)
+      return `"${category.name}" has ${pool.length} question${pool.length === 1 ? "" : "s"} available, so a random slot can't pick ${slot.pickCount}.`;
+    pools.push({ slot, name: category.name, pool });
+  }
+
+  if (questions.length) {
+    await tx.insert(schema.questions).values(
+      questions.map(({ position, bankQuestionId, ...q }, i) => ({
+        ...q,
+        quizId,
+        position: position ?? i,
+        bankQuestionId: bankQuestionId && ownBank.has(bankQuestionId) ? bankQuestionId : null,
+      })),
+    );
+  }
+  for (const { slot, name, pool } of pools) {
+    const [row] = await tx
+      .insert(schema.quizSlots)
+      .values({ quizId, position: slot.position, categoryId: slot.categoryId, categoryName: name, pickCount: slot.pickCount, points: slot.points })
+      .returning({ id: schema.quizSlots.id });
+    await tx.insert(schema.questions).values(
+      pool.map((b) => ({
+        quizId,
+        slotId: row.id,
+        position: slot.position,
+        bankQuestionId: b.id,
+        type: b.type,
+        prompt: b.prompt,
+        options: b.options,
+        correctIndex: b.correctIndex,
+        correctIndexes: b.correctIndexes,
+        acceptedAnswers: b.acceptedAnswers,
+        numericAnswer: b.numericAnswer,
+        tolerance: b.tolerance,
+        explanation: b.explanation,
+        // Every pick is worth the slot's points, so all attempts have the same total.
+        points: slot.points,
+      })),
+    );
+  }
+  return null;
+}
+
+class QuizContentError extends Error {}
 
 export async function createQuiz(draft: QuizDraft): Promise<FormState> {
   const parsed = quizInput.safeParse(draft);
@@ -468,39 +564,58 @@ export async function createQuiz(draft: QuizDraft): Promise<FormState> {
   const { course } = await ownCourse(parsed.data.courseId);
   const quiz = parsed.data;
   if (quiz.deadline.getTime() <= Date.now()) return { error: "The deadline must be in the future." };
+  const problem = contentProblem(quiz.questions, quiz.slots) ?? timingProblem(quiz);
+  if (problem) return { error: problem };
   const sectionId = await checkSection(course.id, quiz.sectionId);
 
-  const quizId = await db.transaction(async (tx) => {
-    const [row] = await tx
-      .insert(schema.quizzes)
-      .values({
-        courseId: course.id,
-        sectionId,
-        title: quiz.title,
-        description: quiz.description || null,
-        timeLimitMinutes: quiz.timeLimitMinutes,
-        deadline: quiz.deadline,
-        shuffle: quiz.shuffle,
-      })
-      .returning({ id: schema.quizzes.id });
-    await tx.insert(schema.questions).values(quiz.questions.map((q, position) => ({ quizId: row.id, position, ...q })));
-    return row.id;
-  });
+  let quizId: string;
+  try {
+    quizId = await db.transaction(async (tx) => {
+      const [row] = await tx
+        .insert(schema.quizzes)
+        .values({
+          courseId: course.id,
+          sectionId,
+          title: quiz.title,
+          description: quiz.description || null,
+          timeLimitMinutes: quiz.timeLimitMinutes,
+          deadline: quiz.deadline,
+          opensAt: quiz.opensAt,
+          shuffle: quiz.shuffle,
+          maxAttempts: quiz.maxAttempts,
+          gradingMethod: quiz.gradingMethod,
+        })
+        .returning({ id: schema.quizzes.id });
+      const error = await writeQuizContent(tx, course.id, row.id, quiz.questions, quiz.slots);
+      if (error) throw new QuizContentError(error); // rolls back the quiz row too
+      return row.id;
+    });
+  } catch (err) {
+    if (err instanceof QuizContentError) return { error: err.message };
+    throw err;
+  }
 
+  const opens = quiz.opensAt && quiz.opensAt.getTime() > Date.now() ? ` · opens ${formatDateTime(quiz.opensAt)}` : "";
   await notifyCourse(course.id, {
     title: `${course.code}: new quiz`,
-    body: `${quiz.title} · ${quiz.timeLimitMinutes} min · due ${formatDateTime(quiz.deadline)}`,
+    body: `${quiz.title} · ${quiz.timeLimitMinutes} min${opens} · due ${formatDateTime(quiz.deadline)}`,
     link: `/student/quizzes/${quizId}`,
   });
   redirect(`/instructor/quizzes/${quizId}`);
 }
 
-const quizUpdate = quizInput.omit({ courseId: true }).extend({ id: uuid, questions: quizInput.shape.questions.optional() });
+const quizUpdate = quizInput.omit({ courseId: true, questions: true, slots: true }).extend({
+  id: uuid,
+  // Omitted = keep the current questions and slots (they are locked once anyone started).
+  questions: quizInput.shape.questions.optional(),
+  slots: quizInput.shape.slots.optional(),
+});
 
 /**
  * Edits a quiz. What may change depends on what students have already done:
- * - Before anyone starts: everything, including the questions and answer key.
- * - After someone starts: title, description, section, shuffle and deadline only.
+ * - Before anyone starts: everything, including the questions, random slots and answer key.
+ * - After someone starts: title, description, section, shuffle, opening time, deadline,
+ *   attempts allowed (never below an attempt already made) and the grading method.
  *   Changing questions or the time limit mid-way would make attempts unfair.
  * - After the deadline: the deadline is fixed, because the answer key is already visible.
  */
@@ -517,27 +632,54 @@ export async function updateQuiz(draft: z.input<typeof quizUpdate>): Promise<For
   if (deadlineChanged && existing.deadline.getTime() <= Date.now())
     return { error: "The deadline has passed and students can already see the answers, so it can't be changed." };
   if (deadlineChanged && q.deadline.getTime() <= Date.now()) return { error: "The new deadline must be in the future." };
+  const replacing = q.questions !== undefined || q.slots !== undefined;
+  const problem = (replacing ? contentProblem(q.questions ?? [], q.slots ?? []) : null) ?? timingProblem(q);
+  if (problem) return { error: problem };
 
   const sectionId = await checkSection(course.id, q.sectionId);
-  const result = await db.transaction(async (tx) => {
-    // Exclusive lock on the quiz: startAttempt takes a shared lock on it, so no student can
-    // start (and snapshot the old questions) while we decide and replace them.
-    await tx.select({ id: schema.quizzes.id }).from(schema.quizzes).where(eq(schema.quizzes.id, existing.id)).for("update");
-    // Checked inside the transaction, right before any question is replaced.
-    const started = await tx.$count(schema.attempts, eq(schema.attempts.quizId, existing.id));
-    if (started > 0 && q.questions) return { error: `Questions are locked because ${started} student${started === 1 ? " has" : "s have"} started this quiz.` };
-    if (started > 0 && q.timeLimitMinutes !== existing.timeLimitMinutes) return { error: "The time limit is locked once students have started." };
+  let result: FormState | null;
+  try {
+    result = await db.transaction(async (tx) => {
+      // Exclusive lock on the quiz: startAttempt takes a shared lock on it, so no student can
+      // start (and snapshot the old questions) while we decide and replace them.
+      await tx.select({ id: schema.quizzes.id }).from(schema.quizzes).where(eq(schema.quizzes.id, existing.id)).for("update");
+      // Checked inside the transaction, right before any question is replaced.
+      const started = await tx.$count(schema.attempts, eq(schema.attempts.quizId, existing.id));
+      if (started > 0 && replacing) return { error: `Questions are locked because ${started} student${started === 1 ? " has" : "s have"} started this quiz.` };
+      if (started > 0 && q.timeLimitMinutes !== existing.timeLimitMinutes) return { error: "The time limit is locked once students have started." };
+      const [{ used }] = await tx
+        .select({ used: sql<number>`coalesce(max(${schema.attempts.attemptNumber}), 0)`.mapWith(Number) })
+        .from(schema.attempts)
+        .where(eq(schema.attempts.quizId, existing.id));
+      if (q.maxAttempts < used) return { error: `A student has already made ${used} attempts, so the limit can't be lower than that.` };
 
-    await tx
-      .update(schema.quizzes)
-      .set({ title: q.title, description: q.description || null, sectionId, timeLimitMinutes: q.timeLimitMinutes, deadline: q.deadline, shuffle: q.shuffle })
-      .where(eq(schema.quizzes.id, existing.id));
-    if (q.questions) {
-      await tx.delete(schema.questions).where(eq(schema.questions.quizId, existing.id));
-      await tx.insert(schema.questions).values(q.questions.map((question, position) => ({ quizId: existing.id, position, ...question })));
-    }
-    return null;
-  });
+      await tx
+        .update(schema.quizzes)
+        .set({
+          title: q.title,
+          description: q.description || null,
+          sectionId,
+          timeLimitMinutes: q.timeLimitMinutes,
+          deadline: q.deadline,
+          opensAt: q.opensAt,
+          shuffle: q.shuffle,
+          maxAttempts: q.maxAttempts,
+          gradingMethod: q.gradingMethod,
+        })
+        .where(eq(schema.quizzes.id, existing.id));
+      if (replacing) {
+        // Pool questions reference their slot, so they go first.
+        await tx.delete(schema.questions).where(eq(schema.questions.quizId, existing.id));
+        await tx.delete(schema.quizSlots).where(eq(schema.quizSlots.quizId, existing.id));
+        const error = await writeQuizContent(tx, course.id, existing.id, q.questions ?? [], q.slots ?? []);
+        if (error) throw new QuizContentError(error);
+      }
+      return null;
+    });
+  } catch (err) {
+    if (err instanceof QuizContentError) return { error: err.message };
+    throw err;
+  }
   if (result) return result;
 
   if (deadlineChanged)

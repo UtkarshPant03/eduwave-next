@@ -2,13 +2,14 @@
  * Gradebook: a students × items matrix (assignments + quizzes) with course totals.
  */
 import "server-only";
-import { and, asc, count, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { courseTotal, type GradeCell } from "@/lib/grading";
-import { finalizeExpiredAttempts } from "@/lib/quiz-engine";
+import { gradedResult, type FinishedAttempt } from "@/lib/questions";
+import { finalizeExpiredAttempts, quizPossible } from "@/lib/quiz-engine";
 import { courseParticipants } from "./courses";
 
-const { assignments, quizzes, questions, submissions, attempts } = schema;
+const { assignments, quizzes, submissions, attempts } = schema;
 
 /**
  * `due` is shown to users; `closes` is when missing work starts counting as 0
@@ -22,24 +23,19 @@ export async function gradebook(courseId: string, onlyStudentId?: string) {
   // Abandoned quiz attempts must count with the score they earned, not as "missing".
   await finalizeExpiredAttempts(onlyStudentId ? { studentId: onlyStudentId } : { courseId });
   const now = Date.now();
-  const [asg, qz, qCounts, students] = await Promise.all([
+  const [asg, qz, students] = await Promise.all([
     // Only the columns needed (instructions can be 20 KB each).
     db
       .select({ id: assignments.id, title: assignments.title, maxPoints: assignments.maxPoints, dueAt: assignments.dueAt, lateDays: assignments.lateDays })
       .from(assignments)
       .where(eq(assignments.courseId, courseId))
       .orderBy(asc(assignments.dueAt)),
-    db.select({ id: quizzes.id, title: quizzes.title, deadline: quizzes.deadline }).from(quizzes).where(eq(quizzes.courseId, courseId)),
-    // Points possible per quiz = number of questions, counted in SQL.
-    db
-      .select({ quizId: questions.quizId, n: count() })
-      .from(questions)
-      .innerJoin(quizzes, eq(quizzes.id, questions.quizId))
-      .where(eq(quizzes.courseId, courseId))
-      .groupBy(questions.quizId),
+    db.select({ id: quizzes.id, title: quizzes.title, deadline: quizzes.deadline, gradingMethod: quizzes.gradingMethod }).from(quizzes).where(eq(quizzes.courseId, courseId)),
     courseParticipants(courseId, onlyStudentId),
   ]);
-  const questionCount = new Map(qCounts.map((r) => [r.quizId, Number(r.n)]));
+  // Points possible per quiz: fixed questions' points + random slots' picks × points.
+  const questionCount = await quizPossible(qz.map((q) => q.id));
+  const methodOf = new Map(qz.map((q) => [q.id, q.gradingMethod]));
 
   const items: GradeItem[] = [
     ...asg.map((a) => ({
@@ -63,14 +59,22 @@ export async function gradebook(courseId: string, onlyStudentId?: string) {
       : [],
     qz.length && ids.length
       ? db
-          .select({ quizId: attempts.quizId, studentId: attempts.studentId, score: attempts.score })
+          .select({ quizId: attempts.quizId, studentId: attempts.studentId, attemptNumber: attempts.attemptNumber, score: attempts.score, total: attempts.total })
           .from(attempts)
           .where(and(inArray(attempts.quizId, qz.map((q) => q.id)), inArray(attempts.studentId, ids), isNotNull(attempts.submittedAt)))
       : [],
   ]);
   // O(1) lookups instead of scanning every submission for every cell.
   const subBy = new Map(subs.map((x) => [`${x.assignmentId}:${x.studentId}`, x]));
-  const attBy = new Map(atts.map((x) => [`${x.quizId}:${x.studentId}`, x]));
+  // Several attempts per student: the value that counts follows the quiz's grading method.
+  const attemptsBy = new Map<string, FinishedAttempt[]>();
+  for (const x of atts) {
+    const key = `${x.quizId}:${x.studentId}`;
+    attemptsBy.set(key, [...(attemptsBy.get(key) ?? []), { attemptNumber: x.attemptNumber, score: x.score ?? 0, total: x.total }]);
+  }
+  const attBy = new Map(
+    [...attemptsBy].map(([key, list]) => [key, gradedResult(list, methodOf.get(key.split(":")[0]) ?? "highest")] as const),
+  );
 
   const rows = students.map((s) => {
     const cells: Record<string, GradeCell> = {};

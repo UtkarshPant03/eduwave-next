@@ -2,7 +2,7 @@
 
 import { timingSafeEqual } from "node:crypto";
 import { refresh } from "next/cache";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "@/db";
 import { courseForStudent } from "@/lib/access";
@@ -11,7 +11,7 @@ import { rateLimit } from "@/lib/auth/throttle";
 import { firstIssue, type FormState } from "@/lib/form";
 import { assignmentWindow } from "@/lib/grading";
 import { notifyUser } from "@/lib/notify";
-import { attemptEndsAt, buildLayout, finalizeAttempt, isAttemptOpen } from "@/lib/quiz-engine";
+import { attemptEndsAt, buildLayout, chooseQuestions, finalizeAttempt, finalizeExpiredAttempts, isAttemptOpen } from "@/lib/quiz-engine";
 import { checkUpload } from "@/lib/uploads";
 
 const uuid = z.uuid();
@@ -143,24 +143,55 @@ async function quizForStudent(quizId: string) {
   return { user, quiz };
 }
 
+/**
+ * Starts the student's next attempt (attempt 1, or a further one when the quiz allows it).
+ * Refused before the quiz opens, after the deadline, while another attempt is open, or
+ * once the attempts allowed are used up. The database enforces the last three as well.
+ */
 export async function startAttempt(formData: FormData) {
   const found = await quizForStudent(uuid.parse(formData.get("quizId")));
   if (!found || found.quiz.deadline.getTime() <= Date.now()) return;
   const { user, quiz } = found;
+  if (quiz.opensAt && quiz.opensAt.getTime() > Date.now()) return;
+  // A previous attempt whose time ran out must be closed before the next one starts.
+  await finalizeExpiredAttempts({ quizId: quiz.id });
   await db.transaction(async (tx) => {
     // Shared lock on the quiz: an instructor's updateQuiz (which takes FOR UPDATE) can't
     // swap the questions between our reading them and creating the attempt.
     await tx.select({ id: schema.quizzes.id }).from(schema.quizzes).where(eq(schema.quizzes.id, quiz.id)).for("share");
+    const mine = await tx
+      .select({ attemptNumber: schema.attempts.attemptNumber, submittedAt: schema.attempts.submittedAt })
+      .from(schema.attempts)
+      .where(and(eq(schema.attempts.quizId, quiz.id), eq(schema.attempts.studentId, user.id)));
+    if (mine.some((a) => !a.submittedAt) || mine.length >= quiz.maxAttempts) return;
+
     const qs = await tx
-      .select({ id: schema.questions.id, options: schema.questions.options })
+      .select({ id: schema.questions.id, options: schema.questions.options, type: schema.questions.type, position: schema.questions.position, slotId: schema.questions.slotId, points: schema.questions.points })
       .from(schema.questions)
       .where(eq(schema.questions.quizId, quiz.id));
-    if (qs.length === 0) return;
-    // The unique (quiz, student) constraint makes a second attempt impossible, even if two
-    // requests race. The layout fixes this student's shuffled order.
+    const slots = await tx
+      .select({ id: schema.quizSlots.id, position: schema.quizSlots.position, pickCount: schema.quizSlots.pickCount })
+      .from(schema.quizSlots)
+      .where(eq(schema.quizSlots.quizId, quiz.id));
+    // How often each pool question has been given so far, so neighbours get different picks.
+    const usage = new Map<string, number>();
+    if (slots.length) {
+      const layouts = await tx.select({ layout: schema.attempts.layout }).from(schema.attempts).where(eq(schema.attempts.quizId, quiz.id));
+      for (const { layout } of layouts) for (const id of layout?.questionOrder ?? []) usage.set(id, (usage.get(id) ?? 0) + 1);
+    }
+    const given = chooseQuestions(qs, slots, usage);
+    if (given.length === 0) return;
+    // UNIQUE (quiz, student, attempt number) and "one open attempt" make a duplicate start
+    // impossible even if two requests race. The layout fixes this attempt's picks and order.
     await tx
       .insert(schema.attempts)
-      .values({ quizId: quiz.id, studentId: user.id, total: qs.length, layout: buildLayout(qs, quiz.shuffle) })
+      .values({
+        quizId: quiz.id,
+        studentId: user.id,
+        attemptNumber: mine.length + 1,
+        total: given.reduce((s, q) => s + q.points, 0),
+        layout: buildLayout(given, quiz.shuffle),
+      })
       .onConflictDoNothing();
   });
   refresh();
@@ -169,17 +200,24 @@ export async function startAttempt(formData: FormData) {
 const answerInput = z.object({
   quizId: uuid,
   questionId: uuid,
-  // Position of the option as SHOWN to this student; mapped back to the original below.
-  displayIndex: z.number().int().min(0).max(5),
+  // Choice questions: positions of the options as SHOWN to this student; mapped back to the
+  // original options below. Exactly one kind of response is sent per question type.
+  displayIndex: z.number().int().min(0).max(5).optional(),
+  displayIndexes: z.array(z.number().int().min(0).max(5)).max(6).optional(),
+  text: z.string().max(500).optional(),
+  number: z.number().finite().nullable().optional(),
 });
 
 export type SaveAnswerResult = { ok: true } | { ok: false; reason: "closed" | "invalid" };
 
-/** Saves one answer immediately, so nothing is lost if the tab closes or time runs out. */
+/**
+ * Saves one answer immediately, so nothing is lost if the tab closes or time runs out.
+ * An empty text, an empty selection or a null number clears the answer.
+ */
 export async function saveAnswer(input: z.input<typeof answerInput>): Promise<SaveAnswerResult> {
   const parsed = answerInput.safeParse(input);
   if (!parsed.success) return { ok: false, reason: "invalid" };
-  const { quizId, questionId, displayIndex } = parsed.data;
+  const { quizId, questionId } = parsed.data;
   const found = await quizForStudent(quizId);
   if (!found) return { ok: false, reason: "invalid" };
   const { user, quiz } = found;
@@ -190,22 +228,59 @@ export async function saveAnswer(input: z.input<typeof answerInput>): Promise<Sa
     const [attempt] = await tx
       .select()
       .from(schema.attempts)
-      .where(and(eq(schema.attempts.quizId, quizId), eq(schema.attempts.studentId, user.id)))
+      .where(and(eq(schema.attempts.quizId, quizId), eq(schema.attempts.studentId, user.id), isNull(schema.attempts.submittedAt)))
       .for("update");
     if (!attempt || attempt.submittedAt || !isAttemptOpen(attempt, quiz)) return { ok: false, reason: "closed" };
 
     const [question] = await tx
-      .select({ options: schema.questions.options })
+      .select({ type: schema.questions.type, options: schema.questions.options, slotId: schema.questions.slotId })
       .from(schema.questions)
       .where(and(eq(schema.questions.id, questionId), eq(schema.questions.quizId, quizId)));
-    if (!question || displayIndex >= question.options.length) return { ok: false, reason: "invalid" };
-    const selectedIndex = attempt.layout?.optionOrders[questionId]?.[displayIndex] ?? displayIndex;
-    if (selectedIndex < 0 || selectedIndex >= question.options.length) return { ok: false, reason: "invalid" };
+    // Only questions this attempt was given (random picks are per attempt).
+    if (!question || !(attempt.layout ? attempt.layout.questionOrder.includes(questionId) : !question.slotId)) return { ok: false, reason: "invalid" };
 
-    await tx
-      .insert(schema.answers)
-      .values({ attemptId: attempt.id, quizId, questionId, selectedIndex })
-      .onConflictDoUpdate({ target: [schema.answers.attemptId, schema.answers.questionId], set: { selectedIndex } });
+    const toOriginal = (d: number) => attempt.layout?.optionOrders[questionId]?.[d] ?? d;
+    const response = { selectedIndex: null as number | null, selectedIndexes: null as number[] | null, textAnswer: null as string | null, numberAnswer: null as number | null };
+    let clear = false;
+    const { displayIndex, displayIndexes, text, number } = parsed.data;
+    switch (question.type) {
+      case "single":
+      case "true_false": {
+        if (displayIndex == null || displayIndex >= question.options.length) return { ok: false, reason: "invalid" };
+        response.selectedIndex = toOriginal(displayIndex);
+        break;
+      }
+      case "multiple": {
+        if (!displayIndexes || displayIndexes.some((d) => d >= question.options.length)) return { ok: false, reason: "invalid" };
+        const picked = [...new Set(displayIndexes.map(toOriginal))].sort((a, b) => a - b);
+        if (picked.length === 0) clear = true;
+        else response.selectedIndexes = picked;
+        break;
+      }
+      case "short_answer": {
+        if (text == null) return { ok: false, reason: "invalid" };
+        const trimmed = text.trim();
+        if (trimmed === "") clear = true;
+        else response.textAnswer = trimmed;
+        break;
+      }
+      case "numerical": {
+        if (number === undefined) return { ok: false, reason: "invalid" };
+        if (number === null) clear = true;
+        else response.numberAnswer = number;
+        break;
+      }
+    }
+    if (response.selectedIndex != null && (response.selectedIndex < 0 || response.selectedIndex >= question.options.length)) return { ok: false, reason: "invalid" };
+
+    if (clear) {
+      await tx.delete(schema.answers).where(and(eq(schema.answers.attemptId, attempt.id), eq(schema.answers.questionId, questionId)));
+    } else {
+      await tx
+        .insert(schema.answers)
+        .values({ attemptId: attempt.id, quizId, questionId, ...response })
+        .onConflictDoUpdate({ target: [schema.answers.attemptId, schema.answers.questionId], set: response });
+    }
     return { ok: true };
   });
 }
@@ -215,7 +290,7 @@ export async function submitAttempt(quizId: string) {
   const found = await quizForStudent(uuid.parse(quizId));
   if (!found) return;
   const attempt = await db.query.attempts.findFirst({
-    where: (a, { and, eq }) => and(eq(a.quizId, found.quiz.id), eq(a.studentId, found.user.id)),
+    where: (a, { and, eq, isNull }) => and(eq(a.quizId, found.quiz.id), eq(a.studentId, found.user.id), isNull(a.submittedAt)),
   });
   // Never record a finish time later than the attempt's real end (the client may call
   // this a moment after the timer hits zero).

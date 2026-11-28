@@ -25,7 +25,8 @@ const doneCount = (userId: string) =>
   (select count(*) from completions c where c.course_id = ${outer("courses", "id")} and c.user_id = ${userId}
      -- only ticks whose item still exists (rows from before migration 0002 may be orphaned)
      and (exists (select 1 from resources r where r.id = c.item_id) or exists (select 1 from live_sessions l where l.id = c.item_id))) +
-  (select count(*) from attempts at join quizzes q on q.id = at.quiz_id
+  -- distinct: a quiz with several attempts counts once
+  (select count(distinct at.quiz_id) from attempts at join quizzes q on q.id = at.quiz_id
      where q.course_id = ${outer("courses", "id")} and at.student_id = ${userId} and at.submitted_at is not null) +
   (select count(*) from submissions s join assignments a on a.id = s.assignment_id
      where a.course_id = ${outer("courses", "id")} and s.student_id = ${userId})`);
